@@ -18,7 +18,7 @@ const pool = new Pool({
   },
   max: 2,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000, // Збільшено до 30 секунд
+  connectionTimeoutMillis: 30000,
 });
 
 pool.on('error', (err) => {
@@ -88,20 +88,23 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   }
 };
 
-bot.onText(/\/start (.+)?/, async (msg, match) => {
-  console.log('Received /start command:', msg);
+bot.onText(/\/start(.*)/, async (msg, match) => {
+  console.log('Отримано команду /start:', msg);
   const chatId = msg.chat.id;
   const userId = msg.from.id;
-  const referralCode = match[1];
-  console.log(`Отримано команду /start від користувача ${userId}, referralCode: ${referralCode}`);
+  const referralCode = match[1] ? match[1].trim() : null;
+  console.log(`Команда /start від користувача ${userId}, referralCode: ${referralCode}`);
 
   try {
     const user = await getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username);
+    console.log('Користувач отриманий або створений:', user);
 
     if (referralCode && user.referred_by === null) {
+      console.log(`Обробка реферального коду: ${referralCode}`);
       const referrer = await sql`SELECT * FROM users WHERE referral_code = ${referralCode}`;
       if (referrer.length > 0 && referrer[0].telegram_id !== userId.toString()) {
         await addReferralBonus(referrer[0].telegram_id, userId.toString(), 5000);
+        console.log('Реферальний бонус додано');
         await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
       }
     }
@@ -113,6 +116,7 @@ bot.onText(/\/start (.+)?/, async (msg, match) => {
     };
 
     await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Play Now", щоб почати гру.', { reply_markup: keyboard });
+    console.log('Відправлено повідомлення з кнопкою Play Now');
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
     await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');

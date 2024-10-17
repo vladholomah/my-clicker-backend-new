@@ -52,6 +52,7 @@ export default async (req, res) => {
     }));
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
+    console.log('Згенеровано реферальне посилання:', referralLink);
 
     res.status(200).json({
       success: true,
@@ -61,6 +62,8 @@ export default async (req, res) => {
       userTotalCoins: user[0].total_coins,
       userLevel: user[0].level
     });
+
+    console.log('Успішно відправлено дані про друзів');
   } catch (error) {
     console.error('Помилка при отриманні даних друзів:', error);
     res.status(500).json({ success: false, error: 'Внутрішня помилка сервера', details: error.message });
