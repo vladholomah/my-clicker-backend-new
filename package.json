@@ -23,7 +23,7 @@
     "express-rate-limit": "^7.1.1",
     "helmet": "^7.0.0",
     "node-telegram-bot-api": "^0.63.0",
-    "pg": "^8.7.1"
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "@types/node": "^20.8.2",
