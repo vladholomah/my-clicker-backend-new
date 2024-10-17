@@ -97,6 +97,7 @@ app.use((req, res, next) => {
   next();
 });
 
+/*
 const setWebhook = async () => {
   const webhookUrl = `${process.env.REACT_APP_API_URL.replace(/\/$/, '')}/bot${process.env.BOT_TOKEN}`;
   console.log('Setting webhook URL:', webhookUrl);
@@ -116,7 +117,9 @@ const setWebhook = async () => {
 };
 
 setWebhook();
+/*
 
+ */
 app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   console.log('Отримано оновлення від Telegram:', JSON.stringify(req.body));
   bot.processUpdate(req.body);
@@ -184,13 +187,12 @@ app.get('/api/getFriends', getFriends);
 
 app.get('/api/test-db', async (req, res) => {
   try {
-    console.log('Attempting to connect to database...');
     const result = await sql`SELECT NOW()`;
-    console.log('Query executed successfully');
-    res.json({ success: true, time: result[0].now });
+    console.log('Database test query result:', result);
+    res.json({ success: true, currentTime: result[0].now });
   } catch (error) {
-    console.error('Database connection error:', error);
-    res.status(500).json({ success: false, error: error.message, stack: error.stack });
+    console.error('Database test query error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
