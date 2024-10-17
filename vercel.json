@@ -3,11 +3,19 @@
   "builds": [
     {
       "src": "server.js",
-      "use": "@vercel/node"
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": ["**/*.js"],
+        "build": {
+          "env": {
+            "NPM_FLAGS": "--legacy-peer-deps"
+          }
+        }
+      }
     }
   ],
-   "rewrites": [
-    { "source": "/(.*)", "destination": "/server.js" }
+  "routes": [
+    { "src": "/(.*)", "dest": "/server.js" }
   ],
   "env": {
     "NODE_ENV": "production"
