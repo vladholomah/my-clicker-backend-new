@@ -95,7 +95,12 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       if (referrer.length > 0 && referrer[0].telegram_id !== userId.toString()) {
         await addReferralBonus(referrer[0].telegram_id, userId.toString(), 5000);
         console.log('Реферальний бонус додано');
-        await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
+        try {
+          await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
+          console.log('Повідомлення про реферальний бонус відправлено');
+        } catch (sendError) {
+          console.error('Помилка при відправці повідомлення про реферальний бонус:', sendError);
+        }
       }
     }
 
@@ -106,13 +111,20 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       ]
     };
 
-    console.log('Відправлення повідомлення з кнопкою "Грати"');
-    await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Грати", щоб почати гру.', { reply_markup: keyboard });
-    console.log('Повідомлення відправлено успішно');
+    console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+    console.log('Спроба відправити повідомлення з кнопкою "Грати"');
+    try {
+      await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Грати", щоб почати гру.', { reply_markup: keyboard });
+      console.log('Повідомлення з кнопкою "Грати" успішно відправлено');
+    } catch (sendError) {
+      console.error('Помилка при відправці повідомлення з кнопкою "Грати":', sendError);
+      throw sendError;
+    }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
     try {
       await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
+      console.log('Повідомлення про помилку відправлено користувачу');
     } catch (sendError) {
       console.error('Не вдалося відправити повідомлення про помилку:', sendError);
     }
