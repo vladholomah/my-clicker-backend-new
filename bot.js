@@ -1,6 +1,5 @@
-import pkg from 'pg';
-const { Pool } = pkg;
 import TelegramBot from 'node-telegram-bot-api';
+import { Pool } from 'pg';
 import { neon, neonConfig } from '@neondatabase/serverless';
 import dotenv from 'dotenv';
 
