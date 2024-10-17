@@ -4,7 +4,15 @@ import { neon, neonConfig } from '@neondatabase/serverless';
 
 dotenv.config();
 
+console.log('FRONTEND_URL при запуску:', process.env.FRONTEND_URL);
+
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
+
+bot.getMe().then((botInfo) => {
+  console.log("Інформація про бота:", botInfo);
+}).catch((error) => {
+  console.error("Помилка отримання інформації про бота:", error);
+});
 
 neonConfig.fetchConnectionCache = true;
 
@@ -68,8 +76,9 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
       const newUser = await insertQuery;
       console.log('Новий користувач створений:', JSON.stringify(newUser[0]));
       return newUser[0];
+    } else {
+      console.log('Користувача знайдено в базі даних:', JSON.stringify(user[0]));
     }
-    console.log('Користувача знайдено:', JSON.stringify(user[0]));
     return user[0];
   } catch (error) {
     console.error('Помилка при отриманні або створенні користувача:', error);
@@ -112,10 +121,11 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     };
 
     console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+    console.log('Підготовка клавіатури для повідомлення:', JSON.stringify(keyboard));
     console.log('Спроба відправити повідомлення з кнопкою "Грати"');
     try {
-      await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Грати", щоб почати гру.', { reply_markup: keyboard });
-      console.log('Повідомлення з кнопкою "Грати" успішно відправлено');
+      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Грати", щоб почати гру.', { reply_markup: keyboard });
+      console.log('Повідомлення з кнопкою "Грати" успішно відправлено:', JSON.stringify(sentMessage));
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення з кнопкою "Грати":', sendError);
       throw sendError;
