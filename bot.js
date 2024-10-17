@@ -69,7 +69,7 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   console.log(`Спроба отримати або створити користувача: ${userId}`);
   try {
     let user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
-    console.log('Результат запиту до бази даних:', user);
+    console.log('Результат запиту до бази даних:', JSON.stringify(user));
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
@@ -78,10 +78,10 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
         VALUES (${userId}, ${firstName || 'Невідомий'}, ${lastName || ''}, ${username || ''}, 0, 0, ${referralCode}, ARRAY[]::text[], NULL, NULL, 'Новачок')
         RETURNING *
       `;
-      console.log('Новий користувач створений:', newUser[0]);
+      console.log('Новий користувач створений:', JSON.stringify(newUser[0]));
       return newUser[0];
     }
-    console.log('Користувача знайдено:', user[0]);
+    console.log('Користувача знайдено:', JSON.stringify(user[0]));
     return user[0];
   } catch (error) {
     console.error('Помилка при отриманні або створенні користувача:', error);
@@ -90,15 +90,16 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
 };
 
 bot.onText(/\/start(.*)/, async (msg, match) => {
-  console.log('Отримано команду /start:', msg);
+  console.log('Отримано команду /start:', JSON.stringify(msg));
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const referralCode = match[1] ? match[1].trim() : null;
   console.log(`Команда /start від користувача ${userId}, referralCode: ${referralCode}`);
 
   try {
+    console.log('Початок обробки команди /start');
     const user = await getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username);
-    console.log('Користувач отриманий або створений:', user);
+    console.log('Користувач отриманий або створений:', JSON.stringify(user));
 
     if (referralCode && user.referred_by === null) {
       console.log(`Обробка реферального коду: ${referralCode}`);
@@ -110,18 +111,23 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       }
     }
 
-    const keyboard = {
+const keyboard = {
       inline_keyboard: [
         [{ text: 'Play Now', web_app: { url: process.env.FRONTEND_URL } }]
       ]
     };
 
-    console.log('Відправляємо привітальне повідомлення');
+    console.log('Спроба відправити привітальне повідомлення');
     await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Play Now", щоб почати гру.', { reply_markup: keyboard });
-    console.log('Привітальне повідомлення відправлено');
+    console.log('Привітальне повідомлення відправлено успішно');
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
-    await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
+    try {
+      await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
+      console.log('Повідомлення про помилку відправлено користувачу');
+    } catch (sendError) {
+      console.error('Не вдалося відправити повідомлення про помилку:', sendError);
+    }
   }
 });
 
