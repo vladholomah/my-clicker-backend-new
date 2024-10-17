@@ -30,7 +30,7 @@ const pool = new Pool({
   },
   max: 2,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 60000, // Збільште до 60 секунд
+  connectionTimeoutMillis: 60000,
 });
 
 pool.on('error', (err) => {
@@ -124,6 +124,47 @@ app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
+const generateReferralCode = () => {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+};
+
+app.post('/api/initUser', async (req, res) => {
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+
+  try {
+    let user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+
+    if (user.length === 0) {
+      // Створюємо нового користувача
+      const referralCode = generateReferralCode();
+      user = await sql`
+        INSERT INTO users (telegram_id, referral_code, coins, total_coins, level)
+        VALUES (${userId}, ${referralCode}, 0, 0, 'Новачок')
+        RETURNING *
+      `;
+      user = user[0];
+    } else {
+      user = user[0];
+    }
+
+    // Повертаємо дані користувача
+    res.json({
+      telegramId: user.telegram_id,
+      referralCode: user.referral_code,
+      coins: user.coins,
+      totalCoins: user.total_coins,
+      level: user.level
+    });
+  } catch (error) {
+    console.error('Error initializing user:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/getUserData', async (req, res) => {
   const { userId } = req.query;
   if (!userId) {
@@ -131,21 +172,40 @@ app.get('/api/getUserData', async (req, res) => {
   }
 
   try {
-    const result = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
-    if (result.length === 0) {
+    const user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    if (user.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = result[0];
+    // Отримуємо друзів користувача
+    const friends = await sql`
+      SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
+      FROM users
+      WHERE telegram_id = ANY(${user[0].referrals}::text[])
+    `;
+
+    const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
+
     res.json({
-      telegramId: user.telegram_id,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      username: user.username,
-      coins: user.coins,
-      totalCoins: user.total_coins,
-      level: user.level,
-      referralCode: user.referral_code
+      telegramId: user[0].telegram_id,
+      firstName: user[0].first_name,
+      lastName: user[0].last_name,
+      username: user[0].username,
+      coins: user[0].coins,
+      totalCoins: user[0].total_coins,
+      level: user[0].level,
+      referralCode: user[0].referral_code,
+      referralLink: referralLink,
+      friends: friends.map(friend => ({
+        telegramId: friend.telegram_id,
+        firstName: friend.first_name,
+        lastName: friend.last_name,
+        username: friend.username,
+        coins: friend.coins,
+        totalCoins: friend.total_coins,
+        level: friend.level,
+        avatar: friend.avatar
+      }))
     });
   } catch (error) {
     console.error('Error fetching user data:', error);

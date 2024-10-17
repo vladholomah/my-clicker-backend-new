@@ -1,8 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
-import pkg from 'pg';
-const { Pool } = pkg;
-import { neon, neonConfig } from '@neondatabase/serverless';
 import dotenv from 'dotenv';
+import { neon, neonConfig } from '@neondatabase/serverless';
 
 dotenv.config();
 
@@ -11,19 +9,6 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 neonConfig.fetchConnectionCache = true;
 
 const sql = neon(process.env.POSTGRES_URL);
-const pool = new Pool({
-  connectionString: process.env.POSTGRES_URL,
-  ssl: {
-    rejectUnauthorized: false,
-  },
-  max: 2,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 60000, // Збільшено до 60 секунд
-});
-
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-});
 
 const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -92,31 +77,6 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   }
 };
 
-const retryOperation = async (operation, retries = 3, delay = 1000) => {
-  try {
-    return await operation();
-  } catch (error) {
-    if (retries > 0) {
-      console.log(`Повторна спроба операції. Залишилось спроб: ${retries}. Помилка:`, error);
-      await new Promise(resolve => setTimeout(resolve, delay));
-      return retryOperation(operation, retries - 1, delay * 2);
-    }
-    console.error('Всі спроби вичерпано. Остання помилка:', error);
-    throw error;
-  }
-};
-
-const checkDatabaseConnection = async () => {
-  try {
-    const result = await sql`SELECT NOW()`;
-    console.log('Підключення до бази даних успішне:', result);
-  } catch (error) {
-    console.error('Помилка підключення до бази даних:', error);
-  }
-};
-
-checkDatabaseConnection();
-
 bot.onText(/\/start(.*)/, async (msg, match) => {
   console.log('Отримано команду /start:', JSON.stringify(msg));
   const chatId = msg.chat.id;
@@ -126,7 +86,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
   try {
     console.log('Початок обробки команди /start');
-    const user = await retryOperation(() => getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username));
+    const user = await getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username);
     console.log('Користувач отриманий або створений:', JSON.stringify(user));
 
     if (referralCode && user.referred_by === null) {
@@ -139,44 +99,22 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       }
     }
 
+    const gameUrl = `https://t.me/${process.env.BOT_USERNAME}?start=game`;
     const keyboard = {
       inline_keyboard: [
-        [{ text: 'Play Now', web_app: { url: process.env.FRONTEND_URL || 'https://default-url.com' } }]
+        [{ text: 'Грати', web_app: { url: process.env.FRONTEND_URL } }]
       ]
     };
-    console.log('WebApp URL:', process.env.FRONTEND_URL);
 
-    console.log('Спроба відправити привітальне повідомлення');
-    await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Play Now", щоб почати гру.', { reply_markup: keyboard });
-    console.log('Привітальне повідомлення відправлено успішно');
+    console.log('Відправлення повідомлення з кнопкою "Грати"');
+    await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Грати", щоб почати гру.', { reply_markup: keyboard });
+    console.log('Повідомлення відправлено успішно');
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
-    console.error('Стек помилки:', error.stack);
     try {
       await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
-      console.log('Повідомлення про помилку відправлено користувачу');
     } catch (sendError) {
       console.error('Не вдалося відправити повідомлення про помилку:', sendError);
-    }
-  }
-});
-
-bot.on('text', async (msg) => {
-  if (msg.text === 'Запросити друзів') {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-
-    try {
-      const user = await sql`SELECT referral_code FROM users WHERE telegram_id = ${userId}`;
-      if (user.length > 0) {
-        const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
-        await bot.sendMessage(chatId, `Запросіть друзів за цим посиланням і отримайте бонус:\n${referralLink}`);
-      } else {
-        await bot.sendMessage(chatId, 'Помилка: користувача не знайдено.');
-      }
-    } catch (error) {
-      console.error('Помилка при отриманні реферального коду:', error);
-      await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
     }
   }
 });
