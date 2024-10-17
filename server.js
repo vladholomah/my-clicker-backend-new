@@ -74,8 +74,17 @@ const limiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  trustProxy: true
+  trustProxy: false,
+  keyGenerator: (req) => {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    if (forwardedFor) {
+      const ips = forwardedFor.split(',').map(ip => ip.trim());
+      return ips[0];
+    }
+    return req.ip;
+  }
 });
+
 app.use(limiter);
 
 console.log('Rate limiter configuration:', JSON.stringify(limiter.options, null, 2));
