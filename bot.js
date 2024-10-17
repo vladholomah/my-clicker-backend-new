@@ -18,7 +18,7 @@ const pool = new Pool({
   },
   max: 2,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+  connectionTimeoutMillis: 30000, // Збільшено до 30 секунд
 });
 
 pool.on('error', (err) => {
@@ -89,6 +89,7 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
 };
 
 bot.onText(/\/start (.+)?/, async (msg, match) => {
+  console.log('Received /start command:', msg);
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const referralCode = match[1];
