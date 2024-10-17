@@ -69,6 +69,7 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   console.log(`Спроба отримати або створити користувача: ${userId}`);
   try {
     let user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    console.log('Результат запиту до бази даних:', user);
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
@@ -115,8 +116,9 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       ]
     };
 
+    console.log('Відправляємо привітальне повідомлення');
     await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Play Now", щоб почати гру.', { reply_markup: keyboard });
-    console.log('Відправлено повідомлення з кнопкою Play Now');
+    console.log('Привітальне повідомлення відправлено');
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
     await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
