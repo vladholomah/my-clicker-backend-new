@@ -88,48 +88,38 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   }
 };
 
-bot.onText(/\/start/, async (msg) => {
+bot.onText(/\/start (.+)?/, async (msg, match) => {
   const chatId = msg.chat.id;
-  console.log(`Отримано команду /start від користувача ${msg.from.id}`);
+  const userId = msg.from.id;
+  const referralCode = match[1];
+  console.log(`Отримано команду /start від користувача ${userId}, referralCode: ${referralCode}`);
 
-  const keyboard = {
-    keyboard: [
-      [{ text: 'Play Now' }]
-    ],
-    resize_keyboard: true
-  };
+  try {
+    const user = await getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username);
 
-  await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть "Play Now", щоб почати гру.', { reply_markup: keyboard });
+    if (referralCode && user.referred_by === null) {
+      const referrer = await sql`SELECT * FROM users WHERE referral_code = ${referralCode}`;
+      if (referrer.length > 0 && referrer[0].telegram_id !== userId.toString()) {
+        await addReferralBonus(referrer[0].telegram_id, userId.toString(), 5000);
+        await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
+      }
+    }
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: 'Play Now', web_app: { url: process.env.FRONTEND_URL } }]
+      ]
+    };
+
+    await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Play Now", щоб почати гру.', { reply_markup: keyboard });
+  } catch (error) {
+    console.error('Помилка при обробці команди /start:', error);
+    await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
+  }
 });
 
 bot.on('text', async (msg) => {
-  if (msg.text === 'Play Now') {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const firstName = msg.from.first_name;
-    const lastName = msg.from.last_name;
-    const username = msg.from.username;
-
-    console.log(`Користувач ${userId} натиснув кнопку Play Now`);
-
-    try {
-      const user = await getOrCreateUser(userId.toString(), firstName, lastName, username);
-
-      const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user.referral_code}`;
-      const gameKeyboard = {
-        keyboard: [
-          [{ text: 'Грати', web_app: { url: process.env.FRONTEND_URL } }],
-          [{ text: 'Запросити друзів' }]
-        ],
-        resize_keyboard: true
-      };
-
-      await bot.sendMessage(chatId, `Чудово! Ви готові до гри.\n\nВаше реферальне посилання: ${referralLink}\n\nВикористовуйте кнопки нижче, щоб почати гру або запросити друзів:`, { reply_markup: gameKeyboard });
-    } catch (error) {
-      console.error('Помилка при обробці Play Now:', error);
-      await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
-    }
-  } else if (msg.text === 'Запросити друзів') {
+  if (msg.text === 'Запросити друзів') {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
 

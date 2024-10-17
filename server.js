@@ -7,6 +7,7 @@ const { Pool } = pkg;
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import getFriends from './getFriends.js';
 
 dotenv.config();
 
@@ -170,64 +171,7 @@ app.post('/api/updateUserCoins', async (req, res) => {
   }
 });
 
-app.get('/api/getFriends', async (req, res) => {
-  const { userId } = req.query;
-  console.log(`Attempting to get friends for user: ${userId}`);
-
-  if (!userId) {
-    console.log('User ID is missing');
-    return res.status(400).json({ error: 'Потрібен ID користувача' });
-  }
-
-  try {
-    const user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
-
-    if (user.length === 0) {
-      console.log(`User not found: ${userId}`);
-      return res.status(404).json({ error: 'Користувача не знайдено' });
-    }
-
-    console.log(`User found: ${JSON.stringify(user[0])}`);
-    let friendsData = [];
-
-    if (user[0].referrals && user[0].referrals.length > 0) {
-      console.log(`Fetching friends data for referrals: ${user[0].referrals}`);
-      const friends = await sql`
-        SELECT telegram_id, first_name, last_name, username, coins, level, total_coins, avatar
-        FROM users 
-        WHERE telegram_id = ANY(${user[0].referrals}::text[])
-      `;
-
-      friendsData = friends.map(friend => ({
-        telegramId: friend.telegram_id,
-        firstName: friend.first_name,
-        lastName: friend.last_name,
-        username: friend.username,
-        coins: friend.coins || 0,
-        level: friend.level || 'Новачок',
-        totalCoins: friend.total_coins || 0,
-        avatar: friend.avatar
-      }));
-      console.log(`Friends data fetched: ${JSON.stringify(friendsData)}`);
-    } else {
-      console.log('User has no referrals');
-    }
-
-    const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
-    console.log(`Referral link generated: ${referralLink}`);
-
-    res.status(200).json({
-      friends: friendsData,
-      referralLink,
-      userCoins: user[0].coins,
-      userTotalCoins: user[0].total_coins,
-      userLevel: user[0].level
-    });
-  } catch (error) {
-    console.error('Error in getFriends:', error);
-    res.status(500).json({ error: 'Внутрішня помилка сервера', details: error.message });
-  }
-});
+app.get('/api/getFriends', getFriends);
 
 app.get('/api/test-db', async (req, res) => {
   try {
