@@ -16,11 +16,8 @@
     "NODE_ENV": "production"
   },
   "regions": ["iad1"],
-  "functions": {
-    "api/**/*.js": {
-      "memory": 1024,
-      "maxDuration": 10
-    }
+  "github": {
+    "enabled": true
   },
   "headers": [
     {
