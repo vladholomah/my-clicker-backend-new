@@ -69,15 +69,18 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   console.log(`Спроба отримати або створити користувача: ${userId}`);
   try {
     let user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    console.log('SQL запит виконано:', sql`SELECT * FROM users WHERE telegram_id = ${userId}`);
     console.log('Результат запиту до бази даних:', JSON.stringify(user));
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
-      const newUser = await sql`
+      const insertQuery = sql`
         INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, referred_by, avatar, level)
         VALUES (${userId}, ${firstName || 'Невідомий'}, ${lastName || ''}, ${username || ''}, 0, 0, ${referralCode}, ARRAY[]::text[], NULL, NULL, 'Новачок')
         RETURNING *
       `;
+      console.log('SQL запит для створення користувача:', insertQuery);
+      const newUser = await insertQuery;
       console.log('Новий користувач створений:', JSON.stringify(newUser[0]));
       return newUser[0];
     }
@@ -94,13 +97,25 @@ const retryOperation = async (operation, retries = 3, delay = 1000) => {
     return await operation();
   } catch (error) {
     if (retries > 0) {
-      console.log(`Retrying operation. Attempts left: ${retries}`);
+      console.log(`Повторна спроба операції. Залишилось спроб: ${retries}. Помилка:`, error);
       await new Promise(resolve => setTimeout(resolve, delay));
       return retryOperation(operation, retries - 1, delay * 2);
     }
+    console.error('Всі спроби вичерпано. Остання помилка:', error);
     throw error;
   }
 };
+
+const checkDatabaseConnection = async () => {
+  try {
+    const result = await sql`SELECT NOW()`;
+    console.log('Підключення до бази даних успішне:', result);
+  } catch (error) {
+    console.error('Помилка підключення до бази даних:', error);
+  }
+};
+
+checkDatabaseConnection();
 
 bot.onText(/\/start(.*)/, async (msg, match) => {
   console.log('Отримано команду /start:', JSON.stringify(msg));
@@ -126,15 +141,17 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
     const keyboard = {
       inline_keyboard: [
-        [{ text: 'Play Now', web_app: { url: process.env.FRONTEND_URL } }]
+        [{ text: 'Play Now', web_app: { url: process.env.FRONTEND_URL || 'https://default-url.com' } }]
       ]
     };
+    console.log('WebApp URL:', process.env.FRONTEND_URL);
 
     console.log('Спроба відправити привітальне повідомлення');
     await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Play Now", щоб почати гру.', { reply_markup: keyboard });
     console.log('Привітальне повідомлення відправлено успішно');
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
+    console.error('Стек помилки:', error.stack);
     try {
       await bot.sendMessage(chatId, 'Сталася помилка. Будь ласка, спробуйте пізніше.');
       console.log('Повідомлення про помилку відправлено користувачу');
