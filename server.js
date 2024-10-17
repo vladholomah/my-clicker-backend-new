@@ -96,7 +96,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const webhookUrl = `${process.env.REACT_APP_API_URL}/bot${process.env.BOT_TOKEN}`;
+const webhookUrl = `${process.env.REACT_APP_API_URL.replace(/\/$/, '')}/bot${process.env.BOT_TOKEN}`;
 console.log('Setting webhook URL:', webhookUrl);
 bot.setWebHook(webhookUrl, {
   max_connections: 40,
