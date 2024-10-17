@@ -18,7 +18,7 @@ const pool = new Pool({
   },
   max: 2,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000,
+  connectionTimeoutMillis: 60000, // Збільшено до 60 секунд
 });
 
 pool.on('error', (err) => {
@@ -89,6 +89,19 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   }
 };
 
+const retryOperation = async (operation, retries = 3, delay = 1000) => {
+  try {
+    return await operation();
+  } catch (error) {
+    if (retries > 0) {
+      console.log(`Retrying operation. Attempts left: ${retries}`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return retryOperation(operation, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+};
+
 bot.onText(/\/start(.*)/, async (msg, match) => {
   console.log('Отримано команду /start:', JSON.stringify(msg));
   const chatId = msg.chat.id;
@@ -98,7 +111,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
   try {
     console.log('Початок обробки команди /start');
-    const user = await getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username);
+    const user = await retryOperation(() => getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username));
     console.log('Користувач отриманий або створений:', JSON.stringify(user));
 
     if (referralCode && user.referred_by === null) {
@@ -111,7 +124,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       }
     }
 
-const keyboard = {
+    const keyboard = {
       inline_keyboard: [
         [{ text: 'Play Now', web_app: { url: process.env.FRONTEND_URL } }]
       ]

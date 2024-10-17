@@ -30,7 +30,7 @@ const pool = new Pool({
   },
   max: 2,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000,
+  connectionTimeoutMillis: 60000, // Збільште до 60 секунд
 });
 
 pool.on('error', (err) => {
@@ -97,29 +97,27 @@ app.use((req, res, next) => {
   next();
 });
 
-/*
 const setWebhook = async () => {
-  const webhookUrl = `${process.env.REACT_APP_API_URL.replace(/\/$/, '')}/bot${process.env.BOT_TOKEN}`;
-  console.log('Setting webhook URL:', webhookUrl);
   try {
-    await bot.setWebHook(webhookUrl, {
-      max_connections: 40,
-      drop_pending_updates: true
-    });
-    console.log('Webhook set successfully');
-  } catch (error) {
-    console.error('Error setting webhook:', error);
-    if (error.response && error.response.statusCode === 429) {
-      console.log('Retrying after 5 seconds...');
-      setTimeout(setWebhook, 5000);
+    const webhookInfo = await bot.getWebHookInfo();
+    if (!webhookInfo.url) {
+      const webhookUrl = `${process.env.REACT_APP_API_URL.replace(/\/$/, '')}/bot${process.env.BOT_TOKEN}`;
+      console.log('Setting webhook URL:', webhookUrl);
+      await bot.setWebHook(webhookUrl, {
+        max_connections: 40,
+        drop_pending_updates: true
+      });
+      console.log('Webhook set successfully');
+    } else {
+      console.log('Webhook already set:', webhookInfo.url);
     }
+  } catch (error) {
+    console.error('Error checking/setting webhook:', error);
   }
 };
 
 setWebhook();
-/*
 
- */
 app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   console.log('Отримано оновлення від Telegram:', JSON.stringify(req.body));
   bot.processUpdate(req.body);
