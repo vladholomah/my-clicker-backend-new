@@ -1,9 +1,7 @@
-import { neon } from '@neondatabase/serverless';
+import { sql } from "@vercel/postgres";
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-const sql = neon(process.env.POSTGRES_URL);
 
 export default async (req, res) => {
   console.log('Отримано запит на отримання друзів:', req.method, req.url);
@@ -20,8 +18,8 @@ export default async (req, res) => {
     console.log('Підключення до PostgreSQL');
 
     // Отримуємо дані користувача
-    const user = await sql`
-      SELECT * FROM users WHERE telegram_id = ${BigInt(userId)}
+    const { rows: user } = await sql`
+      SELECT * FROM users WHERE telegram_id = ${userId}
     `;
 
     if (user.length === 0) {
@@ -32,10 +30,10 @@ export default async (req, res) => {
     console.log('Користувач знайдений:', user[0]);
 
     // Отримуємо дані друзів (рефералів) користувача
-    const friends = await sql`
+    const { rows: friends } = await sql`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users 
-      WHERE telegram_id = ANY(${user[0].referrals}::bigint[])
+      WHERE telegram_id = ANY(${user[0].referrals})
     `;
 
     console.log('Знайдено друзів:', friends.length);
