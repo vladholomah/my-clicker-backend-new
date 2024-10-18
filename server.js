@@ -45,15 +45,15 @@ const createTableIfNotExists = async () => {
   try {
     await sql`
       CREATE TABLE IF NOT EXISTS users (
-        telegram_id TEXT PRIMARY KEY,
+        telegram_id BIGINT PRIMARY KEY,
         first_name TEXT,
         last_name TEXT,
         username TEXT,
-        coins INTEGER DEFAULT 0,
-        total_coins INTEGER DEFAULT 0,
+        coins BIGINT DEFAULT 0,
+        total_coins BIGINT DEFAULT 0,
         referral_code TEXT UNIQUE,
-        referrals TEXT[] DEFAULT ARRAY[]::TEXT[],
-        referred_by TEXT,
+        referrals BIGINT[] DEFAULT ARRAY[]::BIGINT[],
+        referred_by BIGINT,
         avatar TEXT,
         level TEXT DEFAULT 'Новачок'
       )
@@ -161,7 +161,7 @@ app.post('/api/initUser', async (req, res) => {
 
   try {
     console.log('Спроба ініціалізації користувача:', userId);
-    let user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    let user = await sql`SELECT * FROM users WHERE telegram_id = ${BigInt(userId)}`;
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
 
     if (user.length === 0) {
@@ -169,7 +169,7 @@ app.post('/api/initUser', async (req, res) => {
       const referralCode = generateReferralCode();
       const insertQuery = sql`
         INSERT INTO users (telegram_id, referral_code, coins, total_coins, level)
-        VALUES (${userId}, ${referralCode}, 0, 0, 'Новачок')
+        VALUES (${BigInt(userId)}, ${referralCode}, 0, 0, 'Новачок')
         RETURNING *
       `;
       console.log('SQL запит для створення користувача:', insertQuery.sql);
@@ -179,7 +179,7 @@ app.post('/api/initUser', async (req, res) => {
     }
 
     res.json({
-      telegramId: user[0].telegram_id,
+      telegramId: user[0].telegram_id.toString(),
       referralCode: user[0].referral_code,
       coins: user[0].coins,
       totalCoins: user[0].total_coins,
@@ -198,7 +198,7 @@ app.get('/api/getUserData', async (req, res) => {
   }
 
   try {
-    const user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    const user = await sql`SELECT * FROM users WHERE telegram_id = ${BigInt(userId)}`;
     if (user.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -207,13 +207,13 @@ app.get('/api/getUserData', async (req, res) => {
     const friends = await sql`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users
-      WHERE telegram_id = ANY(${user[0].referrals}::text[])
+      WHERE telegram_id = ANY(${user[0].referrals}::bigint[])
     `;
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
 
     res.json({
-      telegramId: user[0].telegram_id,
+      telegramId: user[0].telegram_id.toString(),
       firstName: user[0].first_name,
       lastName: user[0].last_name,
       username: user[0].username,
@@ -223,7 +223,7 @@ app.get('/api/getUserData', async (req, res) => {
       referralCode: user[0].referral_code,
       referralLink: referralLink,
       friends: friends.map(friend => ({
-        telegramId: friend.telegram_id,
+        telegramId: friend.telegram_id.toString(),
         firstName: friend.first_name,
         lastName: friend.last_name,
         username: friend.username,
@@ -248,8 +248,8 @@ app.post('/api/updateUserCoins', async (req, res) => {
   try {
     const result = await sql`
       UPDATE users
-      SET coins = coins + ${coinsToAdd}, total_coins = total_coins + ${coinsToAdd}
-      WHERE telegram_id = ${userId}
+      SET coins = coins + ${BigInt(coinsToAdd)}, total_coins = total_coins + ${BigInt(coinsToAdd)}
+      WHERE telegram_id = ${BigInt(userId)}
       RETURNING coins, total_coins
     `;
 

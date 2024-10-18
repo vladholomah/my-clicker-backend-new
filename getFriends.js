@@ -21,7 +21,7 @@ export default async (req, res) => {
 
     // Отримуємо дані користувача
     const user = await sql`
-      SELECT * FROM users WHERE telegram_id = ${userId}
+      SELECT * FROM users WHERE telegram_id = ${BigInt(userId)}
     `;
 
     if (user.length === 0) {
@@ -35,13 +35,13 @@ export default async (req, res) => {
     const friends = await sql`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users 
-      WHERE telegram_id = ANY(${user[0].referrals}::text[])
+      WHERE telegram_id = ANY(${user[0].referrals}::bigint[])
     `;
 
     console.log('Знайдено друзів:', friends.length);
 
     const friendsData = friends.map(friend => ({
-      telegramId: friend.telegram_id,
+      telegramId: friend.telegram_id.toString(),
       firstName: friend.first_name,
       lastName: friend.last_name,
       username: friend.username,

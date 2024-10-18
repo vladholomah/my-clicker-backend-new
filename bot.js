@@ -48,7 +48,7 @@ const addReferralBonus = async (referrerId, newUserId, bonusAmount) => {
 
       await tx`
         UPDATE users 
-        SET referrals = array_append(referrals, ${newUserId}),
+        SET referrals = array_append(referrals, ${newUserId}::bigint),
             coins = coins + ${bonusAmount},
             total_coins = total_coins + ${bonusAmount}
         WHERE telegram_id = ${referrerId}
@@ -73,14 +73,14 @@ const addReferralBonus = async (referrerId, newUserId, bonusAmount) => {
 const getOrCreateUser = async (userId, firstName, lastName, username) => {
   console.log(`Спроба отримати або створити користувача: ${userId}`);
   try {
-    let user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    let user = await sql`SELECT * FROM users WHERE telegram_id = ${BigInt(userId)}`;
     console.log('Результат SQL-запиту:', JSON.stringify(user));
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
       const insertQuery = sql`
         INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, referred_by, avatar, level)
-        VALUES (${userId}, ${firstName || 'Невідомий'}, ${lastName || ''}, ${username || ''}, 0, 0, ${referralCode}, ARRAY[]::text[], NULL, NULL, 'Новачок')
+        VALUES (${BigInt(userId)}, ${firstName || 'Невідомий'}, ${lastName || ''}, ${username || ''}, 0, 0, ${referralCode}, ARRAY[]::bigint[], NULL, NULL, 'Новачок')
         RETURNING *
       `;
       console.log('SQL запит для створення користувача:', insertQuery);
@@ -108,7 +108,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     console.log('Початок обробки команди /start');
     let user;
     try {
-      user = await getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username);
+      user = await getOrCreateUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
       console.log('Користувач отриманий або створений:', JSON.stringify(user));
     } catch (userError) {
       console.error('Помилка при отриманні або створенні користувача:', userError);
@@ -119,8 +119,8 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       console.log(`Обробка реферального коду: ${referralCode}`);
       try {
         const referrer = await sql`SELECT * FROM users WHERE referral_code = ${referralCode}`;
-        if (referrer.length > 0 && referrer[0].telegram_id !== userId.toString()) {
-          await addReferralBonus(referrer[0].telegram_id, userId.toString(), 5000);
+        if (referrer.length > 0 && referrer[0].telegram_id !== BigInt(userId)) {
+          await addReferralBonus(referrer[0].telegram_id, BigInt(userId), 5000);
           console.log('Реферальний бонус додано');
           try {
             await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
