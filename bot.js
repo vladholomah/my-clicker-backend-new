@@ -103,14 +103,8 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
   try {
     console.log('Початок обробки команди /start');
-    let user;
-    try {
-      user = await getOrCreateUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
-      console.log('Користувач отриманий або створений:', JSON.stringify(user));
-    } catch (userError) {
-      console.error('Помилка при отриманні або створенні користувача:', userError);
-      throw userError;
-    }
+    let user = await getOrCreateUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    console.log('Користувач отриманий або створений:', JSON.stringify(user));
 
     if (referralCode && user.referred_by === null) {
       console.log(`Обробка реферального коду: ${referralCode}`);
@@ -119,12 +113,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
         if (referrer.length > 0 && referrer[0].telegram_id !== userId) {
           await addReferralBonus(referrer[0].telegram_id, userId, 5000);
           console.log('Реферальний бонус додано');
-          try {
-            await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
-            console.log('Повідомлення про реферальний бонус відправлено');
-          } catch (sendError) {
-            console.error('Помилка при відправці повідомлення про реферальний бонус:', sendError);
-          }
+          await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
         }
       } catch (referralError) {
         console.error('Помилка при обробці реферального коду:', referralError);
@@ -133,18 +122,18 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
     const keyboard = {
       inline_keyboard: [
-        [{ text: 'Грати', web_app: { url: process.env.FRONTEND_URL } }]
+        [{ text: 'Play Game', web_app: { url: `${process.env.FRONTEND_URL}?userId=${userId}` } }]
       ]
     };
 
     console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
     console.log('Підготовка клавіатури для повідомлення:', JSON.stringify(keyboard));
-    console.log('Підготовка повідомлення з кнопкою "Грати"');
+
     try {
-      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Грати", щоб почати гру.', { reply_markup: keyboard });
-      console.log('Повідомлення з кнопкою "Грати" успішно відправлено:', JSON.stringify(sentMessage));
+      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', { reply_markup: keyboard });
+      console.log('Повідомлення з кнопкою "Play Game" успішно відправлено:', JSON.stringify(sentMessage));
     } catch (sendError) {
-      console.error('Помилка при відправці повідомлення з кнопкою "Грати":', sendError);
+      console.error('Помилка при відправці повідомлення з кнопкою "Play Game":', sendError);
       throw sendError;
     }
   } catch (error) {

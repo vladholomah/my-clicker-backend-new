@@ -149,9 +149,12 @@ app.post('/api/initUser', async (req, res) => {
       user = newUser;
     }
 
+    const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
+
     res.json({
       telegramId: user[0].telegram_id.toString(),
       referralCode: user[0].referral_code,
+      referralLink: referralLink,
       coins: user[0].coins,
       totalCoins: user[0].total_coins,
       level: user[0].level
