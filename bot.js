@@ -18,6 +18,10 @@ neonConfig.fetchConnectionCache = true;
 
 const sql = neon(process.env.POSTGRES_URL);
 
+sql.connect()
+  .then(() => console.log('Успішне підключення до бази даних'))
+  .catch(err => console.error('Помилка підключення до бази даних:', err));
+
 const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 };
@@ -62,8 +66,7 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   console.log(`Спроба отримати або створити користувача: ${userId}`);
   try {
     let user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
-    console.log('SQL запит виконано:', sql`SELECT * FROM users WHERE telegram_id = ${userId}`);
-    console.log('Результат запиту до бази даних:', JSON.stringify(user));
+    console.log('Результат SQL-запиту:', JSON.stringify(user));
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
@@ -122,7 +125,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
     console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
     console.log('Підготовка клавіатури для повідомлення:', JSON.stringify(keyboard));
-    console.log('Спроба відправити повідомлення з кнопкою "Грати"');
+    console.log('Підготовка повідомлення з кнопкою "Грати"');
     try {
       const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо! Натисніть кнопку "Грати", щоб почати гру.', { reply_markup: keyboard });
       console.log('Повідомлення з кнопкою "Грати" успішно відправлено:', JSON.stringify(sentMessage));
