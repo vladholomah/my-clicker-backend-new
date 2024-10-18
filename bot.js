@@ -6,6 +6,7 @@ dotenv.config();
 
 console.log('FRONTEND_URL при запуску:', process.env.FRONTEND_URL);
 console.log('DB URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
+console.log('BOT_TOKEN (перші 10 символів):', process.env.BOT_TOKEN.substring(0, 10) + '...');
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 
@@ -149,12 +150,23 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     console.log('Підготовка клавіатури для повідомлення:', JSON.stringify(keyboard));
 
     try {
+      console.log('Спроба відправити повідомлення з кнопкою "Play Game"');
       const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', { reply_markup: keyboard });
       console.log('Повідомлення з кнопкою "Play Game" успішно відправлено:', JSON.stringify(sentMessage));
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення з кнопкою "Play Game":', sendError);
       throw sendError;
     }
+
+    // Тестове повідомлення
+    try {
+      console.log('Спроба відправити тестове повідомлення');
+      const testMessage = await bot.sendMessage(chatId, 'Це тестове повідомлення');
+      console.log('Тестове повідомлення успішно відправлено:', JSON.stringify(testMessage));
+    } catch (testError) {
+      console.error('Помилка при відправці тестового повідомлення:', testError);
+    }
+
   } catch (error) {
     console.error('Глобальна помилка при обробці команди /start:', error);
     try {
