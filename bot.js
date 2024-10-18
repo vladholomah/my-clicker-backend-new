@@ -9,6 +9,9 @@ console.log('DB URL (перші 20 символів):', process.env.POSTGRES_URL
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 
+// Об'єкт для відстеження останнього часу виклику /start для кожного користувача
+const lastStartCommand = {};
+
 bot.getMe().then((botInfo) => {
   console.log("Інформація про бота:", botInfo);
 }).catch((error) => {
@@ -108,6 +111,14 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
   const userId = msg.from.id;
   const referralCode = match[1] ? match[1].trim() : null;
   console.log(`Команда /start від користувача ${userId}, referralCode: ${referralCode}`);
+
+  // Перевірка частоти запитів
+  const now = Date.now();
+  if (lastStartCommand[userId] && now - lastStartCommand[userId] < 5000) { // 5 секунд затримка
+    console.log(`Занадто часті запити від користувача ${userId}`);
+    return bot.sendMessage(chatId, 'Будь ласка, зачекайте перед повторним використанням команди /start.');
+  }
+  lastStartCommand[userId] = now;
 
   try {
     console.log('Початок обробки команди /start');
