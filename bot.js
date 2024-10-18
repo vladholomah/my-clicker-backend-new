@@ -15,16 +15,24 @@ bot.getMe().then((botInfo) => {
   console.error("Помилка отримання інформації про бота:", error);
 });
 
-const checkDatabaseConnection = async () => {
-  try {
-    const result = await sql`SELECT NOW()`;
-    console.log('Підключення до бази даних успішне:', result);
-  } catch (error) {
-    console.error('Помилка підключення до бази даних:', error);
+async function connectWithRetry(maxRetries = 5, delay = 5000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const result = await sql`SELECT NOW()`;
+      console.log('Підключення до бази даних успішне:', result);
+      return;
+    } catch (error) {
+      console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
+      if (i === maxRetries - 1) {
+        console.error('Помилка підключення до бази даних:', error);
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
-};
+  throw new Error('Не вдалося підключитися до бази даних після кількох спроб');
+}
 
-checkDatabaseConnection();
+connectWithRetry().catch(console.error);
 
 const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();

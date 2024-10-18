@@ -18,6 +18,25 @@ console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
 
 const app = express();
 
+// Функція для підключення до бази даних з повторними спробами
+async function connectWithRetry(maxRetries = 5, delay = 5000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const result = await sql`SELECT NOW()`;
+      console.log('Підключення до бази даних успішне:', result);
+      return;
+    } catch (error) {
+      console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
+      if (i === maxRetries - 1) {
+        console.error('Помилка підключення до бази даних:', error);
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw new Error('Не вдалося підключитися до бази даних після кількох спроб');
+}
+
+// Функція для створення таблиці, якщо вона не існує
 const createTableIfNotExists = async () => {
   try {
     await sql`
@@ -41,18 +60,19 @@ const createTableIfNotExists = async () => {
   }
 };
 
-async function testDatabaseConnection() {
+// Ініціалізація бази даних
+const initDatabase = async () => {
   try {
-    const result = await sql`SELECT NOW()`;
-    console.log('Database connection test successful:', result[0]);
+    await connectWithRetry();
+    await createTableIfNotExists();
   } catch (error) {
-    console.error('Database connection test failed:', error);
+    console.error('Помилка при ініціалізації бази даних:', error);
   }
-}
+};
 
-testDatabaseConnection();
-createTableIfNotExists().catch(console.error);
+initDatabase();
 
+// Налаштування Express
 app.set('trust proxy', 1);
 app.enable('trust proxy');
 console.log('Trust proxy setting:', app.get('trust proxy'));
@@ -65,6 +85,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Налаштування rate limiter
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -85,6 +106,7 @@ app.use(limiter);
 
 console.log('Rate limiter configuration:', JSON.stringify(limiter.options, null, 2));
 
+// Логування запитів
 app.use((req, res, next) => {
   console.log(`Received ${req.method} request to ${req.url}`);
   console.log('IP:', req.ip);
@@ -92,6 +114,7 @@ app.use((req, res, next) => {
   next();
 });
 
+// Налаштування webhook для бота
 const setWebhook = async () => {
   try {
     const webhookInfo = await bot.getWebHookInfo();
@@ -113,15 +136,19 @@ const setWebhook = async () => {
 
 setWebhook();
 
+// Обробка webhook'ів від Telegram
 app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   console.log('Отримано оновлення від Telegram:', JSON.stringify(req.body));
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
+// Генерація реферального коду
 const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 };
+
+// API ендпоінти
 
 app.post('/api/initUser', async (req, res) => {
   const { userId } = req.body;
@@ -177,7 +204,6 @@ app.get('/api/getUserData', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Отримуємо друзів користувача
     const { rows: friends } = await sql`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users
@@ -258,11 +284,13 @@ app.get('/', (req, res) => {
   res.send('Holmah Coin Bot Server is running!');
 });
 
+// Обробка помилок
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
   res.status(500).send('Something broke!');
 });
 
+// Запуск сервера
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

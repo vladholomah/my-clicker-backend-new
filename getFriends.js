@@ -3,6 +3,23 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+async function connectWithRetry(maxRetries = 5, delay = 5000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const result = await sql`SELECT NOW()`;
+      console.log('Підключення до бази даних успішне:', result);
+      return;
+    } catch (error) {
+      console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
+      if (i === maxRetries - 1) {
+        console.error('Помилка підключення до бази даних:', error);
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw new Error('Не вдалося підключитися до бази даних після кількох спроб');
+}
+
 export default async (req, res) => {
   console.log('Отримано запит на отримання друзів:', req.method, req.url);
   console.log('Параметри запиту:', JSON.stringify(req.query));
@@ -16,6 +33,7 @@ export default async (req, res) => {
 
   try {
     console.log('Підключення до PostgreSQL');
+    await connectWithRetry();
 
     // Отримуємо дані користувача
     const { rows: user } = await sql`
