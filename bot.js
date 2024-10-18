@@ -18,9 +18,17 @@ neonConfig.fetchConnectionCache = true;
 
 const sql = neon(process.env.POSTGRES_URL);
 
-sql.connect()
-  .then(() => console.log('Успішне підключення до бази даних'))
-  .catch(err => console.error('Помилка підключення до бази даних:', err));
+// Перевірка підключення до бази даних
+const checkDatabaseConnection = async () => {
+  try {
+    const result = await sql`SELECT 1`;
+    console.log('Успішне підключення до бази даних');
+  } catch (error) {
+    console.error('Помилка підключення до бази даних:', error);
+  }
+};
+
+checkDatabaseConnection();
 
 const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
