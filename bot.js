@@ -74,7 +74,7 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   console.log(`Спроба отримати або створити користувача: ${userId}`);
   try {
     let user = await sql`SELECT * FROM users WHERE telegram_id = ${BigInt(userId)}`;
-    console.log('Результат SQL-запиту:', JSON.stringify(user));
+    console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
