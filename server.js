@@ -41,6 +41,29 @@ pool.on('connect', () => {
   console.log('New client connected to database');
 });
 
+const createTableIfNotExists = async () => {
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        telegram_id TEXT PRIMARY KEY,
+        first_name TEXT,
+        last_name TEXT,
+        username TEXT,
+        coins INTEGER DEFAULT 0,
+        total_coins INTEGER DEFAULT 0,
+        referral_code TEXT UNIQUE,
+        referrals TEXT[] DEFAULT ARRAY[]::TEXT[],
+        referred_by TEXT,
+        avatar TEXT,
+        level TEXT DEFAULT 'Новачок'
+      )
+    `;
+    console.log('Таблиця users успішно створена або вже існує');
+  } catch (error) {
+    console.error('Помилка при створенні таблиці users:', error);
+  }
+};
+
 async function testDatabaseConnection() {
   try {
     const client = await pool.connect();
@@ -53,6 +76,7 @@ async function testDatabaseConnection() {
 }
 
 testDatabaseConnection();
+createTableIfNotExists().catch(console.error);
 
 setInterval(() => {
   console.log(`Active connections: ${pool.totalCount}, Idle connections: ${pool.idleCount}`);
@@ -136,32 +160,34 @@ app.post('/api/initUser', async (req, res) => {
   }
 
   try {
+    console.log('Спроба ініціалізації користувача:', userId);
     let user = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
 
     if (user.length === 0) {
-      // Створюємо нового користувача
+      console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
-      user = await sql`
+      const insertQuery = sql`
         INSERT INTO users (telegram_id, referral_code, coins, total_coins, level)
         VALUES (${userId}, ${referralCode}, 0, 0, 'Новачок')
         RETURNING *
       `;
-      user = user[0];
-    } else {
-      user = user[0];
+      console.log('SQL запит для створення користувача:', insertQuery.sql);
+      console.log('Параметри запиту:', insertQuery.values);
+      user = await insertQuery;
+      console.log('Результат створення нового користувача:', JSON.stringify(user));
     }
 
-    // Повертаємо дані користувача
     res.json({
-      telegramId: user.telegram_id,
-      referralCode: user.referral_code,
-      coins: user.coins,
-      totalCoins: user.total_coins,
-      level: user.level
+      telegramId: user[0].telegram_id,
+      referralCode: user[0].referral_code,
+      coins: user[0].coins,
+      totalCoins: user[0].total_coins,
+      level: user[0].level
     });
   } catch (error) {
     console.error('Error initializing user:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
