@@ -1,9 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { neon, neonConfig } from '@neondatabase/serverless';
-import pkg from 'pg';
-const { Pool } = pkg;
+import { sql } from "@vercel/postgres";
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -14,32 +12,11 @@ dotenv.config();
 console.log('Starting server...');
 console.log('Environment variables:');
 console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('Database URL:', process.env.POSTGRES_URL ? 'Set (not showing for security)' : 'Not set');
+console.log('Database URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
 console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'Set' : 'Not set');
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
 
 const app = express();
-
-neonConfig.fetchConnectionCache = true;
-
-const sql = neon(process.env.POSTGRES_URL);
-const pool = new Pool({
-  connectionString: process.env.POSTGRES_URL,
-  ssl: {
-    rejectUnauthorized: false,
-  },
-  max: 2,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 60000,
-});
-
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-});
-
-pool.on('connect', () => {
-  console.log('New client connected to database');
-});
 
 const createTableIfNotExists = async () => {
   try {
@@ -66,10 +43,8 @@ const createTableIfNotExists = async () => {
 
 async function testDatabaseConnection() {
   try {
-    const client = await pool.connect();
-    const result = await client.query('SELECT NOW()');
-    console.log('Database connection test successful:', result.rows[0]);
-    client.release();
+    const result = await sql`SELECT NOW()`;
+    console.log('Database connection test successful:', result[0]);
   } catch (error) {
     console.error('Database connection test failed:', error);
   }
@@ -77,10 +52,6 @@ async function testDatabaseConnection() {
 
 testDatabaseConnection();
 createTableIfNotExists().catch(console.error);
-
-setInterval(() => {
-  console.log(`Active connections: ${pool.totalCount}, Idle connections: ${pool.idleCount}`);
-}, 60000);
 
 app.set('trust proxy', 1);
 app.enable('trust proxy');
@@ -161,7 +132,7 @@ app.post('/api/initUser', async (req, res) => {
 
   try {
     console.log('Спроба ініціалізації користувача:', userId);
-    let user = await sql`SELECT * FROM users WHERE telegram_id = ${BigInt(userId)}`;
+    let { rows: user } = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
 
     if (user.length === 0) {
@@ -169,13 +140,13 @@ app.post('/api/initUser', async (req, res) => {
       const referralCode = generateReferralCode();
       const insertQuery = sql`
         INSERT INTO users (telegram_id, referral_code, coins, total_coins, level)
-        VALUES (${BigInt(userId)}, ${referralCode}, 0, 0, 'Новачок')
+        VALUES (${userId}, ${referralCode}, 0, 0, 'Новачок')
         RETURNING *
       `;
-      console.log('SQL запит для створення користувача:', insertQuery.sql);
-      console.log('Параметри запиту:', insertQuery.values);
-      user = await insertQuery;
-      console.log('Результат створення нового користувача:', JSON.stringify(user));
+      console.log('SQL запит для створення користувача:', insertQuery);
+      const { rows: newUser } = await insertQuery;
+      console.log('Результат створення нового користувача:', JSON.stringify(newUser));
+      user = newUser;
     }
 
     res.json({
@@ -198,16 +169,16 @@ app.get('/api/getUserData', async (req, res) => {
   }
 
   try {
-    const user = await sql`SELECT * FROM users WHERE telegram_id = ${BigInt(userId)}`;
+    const { rows: user } = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
     if (user.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
     // Отримуємо друзів користувача
-    const friends = await sql`
+    const { rows: friends } = await sql`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users
-      WHERE telegram_id = ANY(${user[0].referrals}::bigint[])
+      WHERE telegram_id = ANY(${user[0].referrals})
     `;
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
@@ -246,10 +217,10 @@ app.post('/api/updateUserCoins', async (req, res) => {
   }
 
   try {
-    const result = await sql`
+    const { rows: result } = await sql`
       UPDATE users
-      SET coins = coins + ${BigInt(coinsToAdd)}, total_coins = total_coins + ${BigInt(coinsToAdd)}
-      WHERE telegram_id = ${BigInt(userId)}
+      SET coins = coins + ${coinsToAdd}, total_coins = total_coins + ${coinsToAdd}
+      WHERE telegram_id = ${userId}
       RETURNING coins, total_coins
     `;
 
@@ -278,43 +249,6 @@ app.get('/api/test-db', async (req, res) => {
     console.error('Database test query error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
-});
-
-app.get('/api/test-db-detailed', async (req, res) => {
-  console.log('Attempting detailed database connection test...');
-  const testResults = {
-    connectionAttempt: false,
-    connectionSuccess: false,
-    queryAttempt: false,
-    querySuccess: false,
-    error: null
-  };
-
-  try {
-    const client = await pool.connect();
-    testResults.connectionAttempt = true;
-    testResults.connectionSuccess = true;
-    console.log('Database connection established');
-
-    try {
-      const result = await client.query('SELECT NOW()');
-      testResults.queryAttempt = true;
-      testResults.querySuccess = true;
-      console.log('Query executed successfully:', result.rows[0]);
-    } catch (queryError) {
-      testResults.queryAttempt = true;
-      testResults.error = `Query error: ${queryError.message}`;
-      console.error('Query error:', queryError);
-    } finally {
-      client.release();
-    }
-  } catch (connectionError) {
-    testResults.connectionAttempt = true;
-    testResults.error = `Connection error: ${connectionError.message}`;
-    console.error('Database connection error:', connectionError);
-  }
-
-  res.json(testResults);
 });
 
 app.get('/', (req, res) => {

@@ -14,7 +14,6 @@
     "vercel-build": "echo 'Backend build step not required'"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^0.6.1",
     "@twa-dev/sdk": "^6.9.2",
     "axios": "^1.5.1",
     "cors": "^2.8.5",
