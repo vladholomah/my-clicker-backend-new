@@ -106,21 +106,31 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
   try {
     console.log('Початок обробки команди /start');
-    const user = await getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username);
-    console.log('Користувач отриманий або створений:', JSON.stringify(user));
+    let user;
+    try {
+      user = await getOrCreateUser(userId.toString(), msg.from.first_name, msg.from.last_name, msg.from.username);
+      console.log('Користувач отриманий або створений:', JSON.stringify(user));
+    } catch (userError) {
+      console.error('Помилка при отриманні або створенні користувача:', userError);
+      throw userError;
+    }
 
     if (referralCode && user.referred_by === null) {
       console.log(`Обробка реферального коду: ${referralCode}`);
-      const referrer = await sql`SELECT * FROM users WHERE referral_code = ${referralCode}`;
-      if (referrer.length > 0 && referrer[0].telegram_id !== userId.toString()) {
-        await addReferralBonus(referrer[0].telegram_id, userId.toString(), 5000);
-        console.log('Реферальний бонус додано');
-        try {
-          await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
-          console.log('Повідомлення про реферальний бонус відправлено');
-        } catch (sendError) {
-          console.error('Помилка при відправці повідомлення про реферальний бонус:', sendError);
+      try {
+        const referrer = await sql`SELECT * FROM users WHERE referral_code = ${referralCode}`;
+        if (referrer.length > 0 && referrer[0].telegram_id !== userId.toString()) {
+          await addReferralBonus(referrer[0].telegram_id, userId.toString(), 5000);
+          console.log('Реферальний бонус додано');
+          try {
+            await bot.sendMessage(chatId, 'Вітаємо! Ви отримали реферальний бонус!');
+            console.log('Повідомлення про реферальний бонус відправлено');
+          } catch (sendError) {
+            console.error('Помилка при відправці повідомлення про реферальний бонус:', sendError);
+          }
         }
+      } catch (referralError) {
+        console.error('Помилка при обробці реферального коду:', referralError);
       }
     }
 
