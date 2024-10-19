@@ -35,15 +35,7 @@ const limiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  trustProxy: true,
-  keyGenerator: (req) => {
-    const forwardedFor = req.headers['x-forwarded-for'];
-    if (forwardedFor) {
-      const ips = forwardedFor.split(',').map(ip => ip.trim());
-      return ips[0];
-    }
-    return req.ip;
-  }
+  trustProxy: true
 });
 
 app.use(limiter);
@@ -55,33 +47,6 @@ app.use((req, res, next) => {
   console.log('IP:', req.ip);
   console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
   next();
-});
-
-const setWebhook = async () => {
-  try {
-    const webhookInfo = await bot.getWebHookInfo();
-    const webhookUrl = `${process.env.BACKEND_URL}/bot${process.env.BOT_TOKEN}`;
-    if (webhookInfo.url !== webhookUrl) {
-      console.log('Setting webhook URL:', webhookUrl);
-      await bot.setWebHook(webhookUrl, {
-        max_connections: 40,
-        drop_pending_updates: true
-      });
-      console.log('Webhook set successfully');
-    } else {
-      console.log('Webhook already set:', webhookInfo.url);
-    }
-  } catch (error) {
-    console.error('Error checking/setting webhook:', error);
-  }
-};
-
-setWebhook();
-
-app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
-  console.log('Отримано оновлення від Telegram:', JSON.stringify(req.body));
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
 });
 
 const generateReferralCode = () => {
