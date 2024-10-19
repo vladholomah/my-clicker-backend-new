@@ -11,6 +11,7 @@ export const pool = createPool({
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
+  keepAlive: true
 });
 
 async function testConnection() {
