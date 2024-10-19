@@ -68,4 +68,3 @@ export default async (req, res) => {
     client.release();
   }
 };
-dscd
