@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { createPool } from '@vercel/postgres';
+import { Pool } from '@vercel/postgres';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -18,25 +18,22 @@ console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
 
 const app = express();
 
-const pool = createPool({
+const pool = new Pool({
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false
   },
   max: 1,
-  connectionTimeoutMillis: 10000,
-  idleTimeoutMillis: 10000,
-  allowExitOnIdle: true
+  connectionTimeoutMillis: 0,
+  idleTimeoutMillis: 0
 });
 
-// Функція для підключення до бази даних з повторними спробами
 async function connectWithRetry(maxRetries = 10, delay = 10000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const client = await pool.connect();
-      const result = await client.query('SELECT NOW()');
+      console.log(`Спроба підключення до бази даних ${i + 1}/${maxRetries}`);
+      const result = await pool.query('SELECT NOW()');
       console.log('Підключення до бази даних успішне:', result.rows[0]);
-      client.release();
       return;
     } catch (error) {
       console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
@@ -52,9 +49,8 @@ async function connectWithRetry(maxRetries = 10, delay = 10000) {
 
 // Функція для створення таблиці, якщо вона не існує
 const createTableIfNotExists = async () => {
-  const client = await pool.connect();
   try {
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
         first_name TEXT,
@@ -72,8 +68,6 @@ const createTableIfNotExists = async () => {
     console.log('Таблиця users успішно створена або вже існує');
   } catch (error) {
     console.error('Помилка при створенні таблиці users:', error);
-  } finally {
-    client.release();
   }
 };
 
@@ -82,8 +76,10 @@ const initDatabase = async () => {
   try {
     await connectWithRetry();
     await createTableIfNotExists();
+    console.log('База даних успішно ініціалізована');
   } catch (error) {
     console.error('Помилка при ініціалізації бази даних:', error);
+    process.exit(1);
   }
 };
 
@@ -174,16 +170,15 @@ app.post('/api/initUser', async (req, res) => {
     return res.status(400).json({ error: 'User ID is required' });
   }
 
-  const client = await pool.connect();
   try {
     console.log('Спроба ініціалізації користувача:', userId);
-    let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+    let { rows: user } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
 
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
-      const { rows: newUser } = await client.query(
+      const { rows: newUser } = await pool.query(
         'INSERT INTO users (telegram_id, referral_code, coins, total_coins, level) VALUES ($1, $2, 0, 0, $3) RETURNING *',
         [userId, referralCode, 'Новачок']
       );
@@ -204,8 +199,6 @@ app.post('/api/initUser', async (req, res) => {
   } catch (error) {
     console.error('Error initializing user:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
-  } finally {
-    client.release();
   }
 });
 
@@ -215,14 +208,13 @@ app.get('/api/getUserData', async (req, res) => {
     return res.status(400).json({ error: 'User ID is required' });
   }
 
-  const client = await pool.connect();
   try {
-    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+    const { rows: user } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const { rows: friends } = await client.query(`
+    const { rows: friends } = await pool.query(`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users
       WHERE telegram_id = ANY($1)
@@ -254,8 +246,6 @@ app.get('/api/getUserData', async (req, res) => {
   } catch (error) {
     console.error('Error fetching user data:', error);
     res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
   }
 });
 
@@ -265,9 +255,8 @@ app.post('/api/updateUserCoins', async (req, res) => {
     return res.status(400).json({ error: 'User ID and coins amount are required' });
   }
 
-  const client = await pool.connect();
   try {
-    const { rows: result } = await client.query(`
+    const { rows: result } = await pool.query(`
       UPDATE users
       SET coins = coins + $1, total_coins = total_coins + $1
       WHERE telegram_id = $2
@@ -285,24 +274,19 @@ app.post('/api/updateUserCoins', async (req, res) => {
   } catch (error) {
     console.error('Error updating user coins:', error);
     res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
   }
 });
 
 app.get('/api/getFriends', getFriends);
 
 app.get('/api/test-db', async (req, res) => {
-  const client = await pool.connect();
   try {
-    const result = await client.query('SELECT NOW()');
+    const result = await pool.query('SELECT NOW()');
     console.log('Database test query result:', result.rows[0]);
     res.json({ success: true, currentTime: result.rows[0].now });
   } catch (error) {
     console.error('Database test query error:', error);
     res.status(500).json({ success: false, error: error.message });
-  } finally {
-    client.release();
   }
 });
 
@@ -314,14 +298,6 @@ app.get('/', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
   res.status(500).send('Something broke!');
-});
-
-// Закриття з'єднань при завершенні роботи сервера
-process.on('SIGINT', async () => {
-  console.log('Closing database connections...');
-  await pool.end();
-  console.log('Database connections closed.');
-  process.exit(0);
 });
 
 // Запуск сервера
