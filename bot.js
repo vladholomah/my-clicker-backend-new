@@ -34,13 +34,23 @@ async function handleStart(msg) {
       ]
     };
 
-    await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', {
-      reply_markup: keyboard
-    });
-    console.log('Повідомлення з кнопкою "Play Game" відправлено');
+    console.log('Підготовка до відправки повідомлення з кнопкою "Play Game"');
+    try {
+      await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', {
+        reply_markup: keyboard
+      });
+      console.log('Повідомлення з кнопкою "Play Game" відправлено');
+    } catch (sendError) {
+      console.error('Помилка при відправці повідомлення:', sendError);
+      throw sendError; // Перекидаємо помилку, щоб вона була оброблена у зовнішньому блоці catch
+    }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
-    await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше.');
+    try {
+      await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше.');
+    } catch (finalError) {
+      console.error('Не вдалося відправити повідомлення про помилку:', finalError);
+    }
   }
 }
 

@@ -35,7 +35,10 @@ const limiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  trustProxy: true
+  trustProxy: false, // змінено з true на false
+  keyGenerator: (req) => {
+    return req.ip; // Використовуємо IP-адресу як ключ
+  }
 });
 
 app.use(limiter);
