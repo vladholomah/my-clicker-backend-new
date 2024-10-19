@@ -1,21 +1,22 @@
-import { createPool } from '@vercel/postgres';
+import { Pool } from '@vercel/postgres';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const pool = createPool({
+const pool = new Pool({
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false
   },
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  max: 1,
+  connectionTimeoutMillis: 0,
+  idleTimeoutMillis: 0
 });
 
 async function connectWithRetry(maxRetries = 10, delay = 10000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
+      console.log(`Спроба підключення до бази даних ${i + 1}/${maxRetries}`);
       const result = await pool.query('SELECT NOW()');
       console.log('Підключення до бази даних успішне:', result.rows[0]);
       return;
