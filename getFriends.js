@@ -1,36 +1,4 @@
-import { createPool } from '@vercel/postgres';
-import dotenv from 'dotenv';
-
-dotenv.config();
-
-const pool = createPool({
-  connectionString: process.env.POSTGRES_URL,
-  ssl: {
-    rejectUnauthorized: false
-  },
-  max: 1,
-  connectionTimeoutMillis: 0,
-  idleTimeoutMillis: 0
-});
-
-async function connectWithRetry(maxRetries = 10, delay = 10000) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      console.log(`Спроба підключення до бази даних ${i + 1}/${maxRetries}`);
-      const result = await pool.query('SELECT NOW()');
-      console.log('Підключення до бази даних успішне:', result.rows[0]);
-      return;
-    } catch (error) {
-      console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
-      console.error('Деталі помилки:', error);
-      if (i === maxRetries - 1) {
-        console.error('Помилка підключення до бази даних:', error);
-      }
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-  throw new Error('Не вдалося підключитися до бази даних після кількох спроб');
-}
+import { pool } from './db.js';
 
 export default async (req, res) => {
   console.log('Отримано запит на отримання друзів:', req.method, req.url);
@@ -43,12 +11,12 @@ export default async (req, res) => {
     return res.status(400).json({ success: false, error: 'Потрібен userId' });
   }
 
+  const client = await pool.connect();
   try {
-    console.log('Підключення до PostgreSQL');
-    await connectWithRetry();
+    await client.query('BEGIN');
 
     // Отримуємо дані користувача
-    const { rows: user } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
 
     if (user.length === 0) {
       console.error('Користувача не знайдено');
@@ -58,7 +26,7 @@ export default async (req, res) => {
     console.log('Користувач знайдений:', user[0]);
 
     // Отримуємо дані друзів (рефералів) користувача
-    const { rows: friends } = await pool.query(`
+    const { rows: friends } = await client.query(`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users 
       WHERE telegram_id = ANY($1)
@@ -80,6 +48,8 @@ export default async (req, res) => {
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
     console.log('Згенеровано реферальне посилання:', referralLink);
 
+    await client.query('COMMIT');
+
     res.status(200).json({
       success: true,
       friends: friendsData,
@@ -91,7 +61,10 @@ export default async (req, res) => {
 
     console.log('Успішно відправлено дані про друзів');
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Помилка при отриманні даних друзів:', error);
     res.status(500).json({ success: false, error: 'Внутрішня помилка сервера', details: error.message });
+  } finally {
+    client.release();
   }
 };
