@@ -8,7 +8,12 @@ console.log('FRONTEND_URL при запуску:', process.env.FRONTEND_URL);
 console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
 console.log('BOT_TOKEN (перші 10 символів):', process.env.BOT_TOKEN.substring(0, 10) + '...');
 
-const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
+const bot = new TelegramBot(process.env.BOT_TOKEN, {
+  polling: false,
+  request: {
+    timeout: 60000 // 60 секунд
+  }
+});
 
 const pool = createPool({
   connectionString: process.env.POSTGRES_URL,
@@ -16,8 +21,8 @@ const pool = createPool({
     rejectUnauthorized: false
   },
   max: 1,
-  connectionTimeoutMillis: 0,
-  idleTimeoutMillis: 0
+  connectionTimeoutMillis: 30000,
+  idleTimeoutMillis: 30000
 });
 
 async function connectWithRetry(maxRetries = 10, delay = 10000) {
@@ -156,10 +161,18 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
     try {
       console.log('Спроба відправити повідомлення з кнопкою "Play Game"');
-      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', { reply_markup: keyboard });
+      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', {
+        reply_markup: keyboard,
+        disable_web_page_preview: true
+      });
       console.log('Повідомлення з кнопкою "Play Game" успішно відправлено:', JSON.stringify(sentMessage));
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення з кнопкою "Play Game":', sendError);
+      try {
+        await bot.sendMessage(chatId, 'Вибачте, виникла помилка. Будь ласка, спробуйте ще раз пізніше.');
+      } catch (fallbackError) {
+        console.error('Не вдалося відправити навіть просте повідомлення:', fallbackError);
+      }
     }
 
   } catch (error) {

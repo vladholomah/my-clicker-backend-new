@@ -24,8 +24,8 @@ const pool = createPool({
     rejectUnauthorized: false
   },
   max: 1,
-  connectionTimeoutMillis: 0,
-  idleTimeoutMillis: 0
+  connectionTimeoutMillis: 30000,
+  idleTimeoutMillis: 30000
 });
 
 async function connectWithRetry(maxRetries = 10, delay = 10000) {
