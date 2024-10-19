@@ -15,13 +15,10 @@ const pool = createPool({
   ssl: {
     rejectUnauthorized: false
   },
-  max: 20,
+  max: 5,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 5000,
 });
-
-// Об'єкт для відстеження останнього часу виклику /start для кожного користувача
-const lastStartCommand = {};
 
 bot.getMe().then((botInfo) => {
   console.log("Інформація про бота:", botInfo);
@@ -122,14 +119,6 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
   const referralCode = match[1] ? match[1].trim() : null;
   console.log(`Команда /start від користувача ${userId}, referralCode: ${referralCode}`);
 
-  // Перевірка частоти запитів
-  const now = Date.now();
-  if (lastStartCommand[userId] && now - lastStartCommand[userId] < 5000) { // 5 секунд затримка
-    console.log(`Занадто часті запити від користувача ${userId}`);
-    return bot.sendMessage(chatId, 'Будь ласка, зачекайте перед повторним використанням команди /start.');
-  }
-  lastStartCommand[userId] = now;
-
   try {
     console.log('Початок обробки команди /start');
     let user = await getOrCreateUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
@@ -164,16 +153,6 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       console.log('Повідомлення з кнопкою "Play Game" успішно відправлено:', JSON.stringify(sentMessage));
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення з кнопкою "Play Game":', sendError);
-      throw sendError;
-    }
-
-    // Тестове повідомлення
-    try {
-      console.log('Спроба відправити тестове повідомлення');
-      const testMessage = await bot.sendMessage(chatId, 'Це тестове повідомлення');
-      console.log('Тестове повідомлення успішно відправлено:', JSON.stringify(testMessage));
-    } catch (testError) {
-      console.error('Помилка при відправці тестового повідомлення:', testError);
     }
 
   } catch (error) {

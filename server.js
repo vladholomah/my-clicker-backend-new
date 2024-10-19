@@ -23,9 +23,9 @@ const pool = createPool({
   ssl: {
     rejectUnauthorized: false
   },
-  max: 20,
+  max: 5,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 5000,
 });
 
 // Функція для підключення до бази даних з повторними спробами
@@ -296,6 +296,15 @@ app.get('/', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
   res.status(500).send('Something broke!');
+});
+
+// Закриття з'єднань при завершенні роботи сервера
+process.on('SIGINT', () => {
+  console.log('Closing database connections...');
+  pool.end(() => {
+    console.log('Database connections closed.');
+    process.exit(0);
+  });
 });
 
 // Запуск сервера
