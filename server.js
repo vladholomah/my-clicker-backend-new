@@ -15,6 +15,7 @@ console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
 console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'Set' : 'Not set');
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+console.log('BOT_USERNAME:', process.env.BOT_USERNAME);
 
 const app = express();
 
@@ -35,9 +36,9 @@ const limiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  trustProxy: false, // змінено з true на false
+  trustProxy: false,
   keyGenerator: (req) => {
-    return req.ip; // Використовуємо IP-адресу як ключ
+    return req.ip;
   }
 });
 
