@@ -28,3 +28,10 @@ async function testConnection() {
 }
 
 testConnection();
+
+process.on('exit', async () => {
+  console.log('Closing database pool...');
+  await pool.end();
+});
+
+export default pool;

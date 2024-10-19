@@ -19,10 +19,16 @@ bot.on('text', async (msg) => {
   }
 });
 
+bot.on('polling_error', (error) => {
+  console.error('Помилка polling:', error);
+});
+
 async function handleStart(msg) {
   console.log('Обробка команди /start');
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+
+  console.log(`Обробка /start для користувача ${userId} в чаті ${chatId}`);
 
   try {
     const user = await getOrCreateUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
@@ -48,8 +54,13 @@ async function handleStart(msg) {
 
     // Перевірка на наявність реферального коду
     const referralCode = msg.text.split(' ')[1];
-    if (referralCode && user.referred_by === null) {
-      await processReferral(referralCode, userId);
+    if (referralCode) {
+      console.log(`Отримано реферальний код: ${referralCode}`);
+      if (user.referred_by === null) {
+        await processReferral(referralCode, userId);
+      } else {
+        console.log('Користувач вже був запрошений раніше');
+      }
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
@@ -139,5 +150,11 @@ async function addReferralBonus(referrerId, newUserId, bonusAmount) {
     client.release();
   }
 }
+
+bot.getMe().then((botInfo) => {
+  console.log("Бот успішно запущено. Інформація про бота:", botInfo);
+}).catch((error) => {
+  console.error("Помилка при отриманні інформації про бота:", error);
+});
 
 export default bot;
