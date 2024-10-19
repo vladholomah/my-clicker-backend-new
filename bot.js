@@ -15,9 +15,10 @@ const pool = createPool({
   ssl: {
     rejectUnauthorized: false
   },
-  max: 5,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  max: 1,
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 10000,
+  allowExitOnIdle: true
 });
 
 bot.getMe().then((botInfo) => {
@@ -29,8 +30,10 @@ bot.getMe().then((botInfo) => {
 async function connectWithRetry(maxRetries = 10, delay = 10000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const result = await pool.query('SELECT NOW()');
+      const client = await pool.connect();
+      const result = await client.query('SELECT NOW()');
       console.log('Підключення до бази даних успішне:', result.rows[0]);
+      client.release();
       return;
     } catch (error) {
       console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
@@ -53,16 +56,17 @@ const generateReferralCode = () => {
 const addReferralBonus = async (referrerId, newUserId, bonusAmount) => {
   console.log(`Додавання реферального бонусу: referrerId=${referrerId}, newUserId=${newUserId}, bonusAmount=${bonusAmount}`);
 
+  const client = await pool.connect();
   try {
-    await pool.query('BEGIN');
-    const { rows: referrer } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [referrerId]);
-    const { rows: newUser } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [newUserId]);
+    await client.query('BEGIN');
+    const { rows: referrer } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [referrerId]);
+    const { rows: newUser } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [newUserId]);
 
     if (referrer.length === 0 || newUser.length === 0) {
       throw new Error('Referrer or new user not found');
     }
 
-    await pool.query(`
+    await client.query(`
       UPDATE users 
       SET referrals = array_append(referrals, $1),
           coins = coins + $2,
@@ -70,7 +74,7 @@ const addReferralBonus = async (referrerId, newUserId, bonusAmount) => {
       WHERE telegram_id = $3
     `, [newUserId, bonusAmount, referrerId]);
 
-    await pool.query(`
+    await client.query(`
       UPDATE users
       SET coins = coins + $1,
           total_coins = total_coins + $1,
@@ -78,37 +82,46 @@ const addReferralBonus = async (referrerId, newUserId, bonusAmount) => {
       WHERE telegram_id = $3
     `, [bonusAmount, referrerId, newUserId]);
 
-    await pool.query('COMMIT');
+    await client.query('COMMIT');
     console.log('Реферальний бонус успішно додано');
   } catch (error) {
-    await pool.query('ROLLBACK');
+    await client.query('ROLLBACK');
     console.error('Помилка при додаванні реферального бонусу:', error);
     throw error;
+  } finally {
+    client.release();
   }
 };
 
 const getOrCreateUser = async (userId, firstName, lastName, username) => {
   console.log(`Спроба отримати або створити користувача: ${userId}`);
   console.log('Тип userId:', typeof userId);
+  const client = await pool.connect();
   try {
-    const { rows } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(rows));
     if (rows.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
-      const { rows: newUser } = await pool.query(
+      const { rows: newUser } = await client.query(
         'INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, referred_by, avatar, level) VALUES ($1, $2, $3, $4, 0, 0, $5, ARRAY[]::bigint[], NULL, NULL, $6) RETURNING *',
         [userId, firstName || 'Невідомий', lastName || '', username || '', referralCode, 'Новачок']
       );
       console.log('Новий користувач створений:', JSON.stringify(newUser[0]));
+      await client.query('COMMIT');
       return newUser[0];
     } else {
       console.log('Користувача знайдено в базі даних:', JSON.stringify(rows[0]));
+      await client.query('COMMIT');
       return rows[0];
     }
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Помилка при отриманні або створенні користувача:', error);
     throw error;
+  } finally {
+    client.release();
   }
 };
 
@@ -127,7 +140,9 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     if (referralCode && user.referred_by === null) {
       console.log(`Обробка реферального коду: ${referralCode}`);
       try {
-        const { rows: referrer } = await pool.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
+        const client = await pool.connect();
+        const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
+        client.release();
         if (referrer.length > 0 && referrer[0].telegram_id !== userId) {
           await addReferralBonus(referrer[0].telegram_id, userId, 5000);
           console.log('Реферальний бонус додано');
