@@ -14,7 +14,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
 
 bot.on('text', async (msg) => {
   console.log('Отримано повідомлення:', msg.text);
-  if (msg.text.startsWith('/start')) {
+  if (msg.text === '/start') {
     await handleStart(msg);
   }
 });
@@ -36,20 +36,13 @@ async function handleStart(msg) {
 
     console.log('Підготовка до відправки повідомлення з кнопкою "Play Game"');
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Затримка 1 секунда
       await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', {
         reply_markup: keyboard
       });
       console.log('Повідомлення з кнопкою "Play Game" відправлено');
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення:', sendError);
-      throw sendError;
-    }
-
-    // Перевірка на наявність реферального коду
-    const referralCode = msg.text.split(' ')[1];
-    if (referralCode && user.referred_by === null) {
-      await processReferral(referralCode, userId);
+      throw sendError; // Перекидаємо помилку, щоб вона була оброблена у зовнішньому блоці catch
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
@@ -88,31 +81,19 @@ function generateReferralCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-async function processReferral(referralCode, newUserId) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
-    if (referrer.length > 0 && referrer[0].telegram_id !== newUserId) {
-      await addReferralBonus(referrer[0].telegram_id, newUserId, 5000);
-      console.log('Реферальний бонус додано');
-      await bot.sendMessage(newUserId, 'Вітаємо! Ви отримали реферальний бонус!');
-    }
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Помилка при обробці реферального коду:', error);
-  } finally {
-    client.release();
-  }
-}
-
 async function addReferralBonus(referrerId, newUserId, bonusAmount) {
   console.log(`Додавання реферального бонусу: referrerId=${referrerId}, newUserId=${newUserId}, bonusAmount=${bonusAmount}`);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const { rows: referrer } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [referrerId]);
+    const { rows: newUser } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [newUserId]);
+
+    if (referrer.length === 0 || newUser.length === 0) {
+      throw new Error('Referrer or new user not found');
+    }
+
     await client.query(`
       UPDATE users 
       SET referrals = array_append(referrals, $1),
