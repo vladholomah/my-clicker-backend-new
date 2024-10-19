@@ -41,12 +41,15 @@ async function handleStart(msg) {
     };
 
     console.log('Підготовка до відправки повідомлення з кнопкою "Play Game"');
+    console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+    console.log('Keyboard:', JSON.stringify(keyboard));
+
     try {
       await new Promise(resolve => setTimeout(resolve, 1000)); // Затримка 1 секунда
-      await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', {
+      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', {
         reply_markup: keyboard
       });
-      console.log('Повідомлення з кнопкою "Play Game" відправлено');
+      console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення:', sendError);
       throw sendError;
