@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
-import { Pool } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 
 dotenv.config();
 
@@ -10,14 +10,14 @@ console.log('BOT_TOKEN (перші 10 символів):', process.env.BOT_TOKEN
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 
-const pool = new Pool({
+const pool = createPool({
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false
   },
-  connectionTimeoutMillis: 30000,
-  idleTimeoutMillis: 60000,
-  max: 20
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 });
 
 // Об'єкт для відстеження останнього часу виклику /start для кожного користувача

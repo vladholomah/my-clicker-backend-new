@@ -1,16 +1,16 @@
-import { Pool } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const pool = new Pool({
+const pool = createPool({
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false
   },
-  connectionTimeoutMillis: 30000,
-  idleTimeoutMillis: 60000,
-  max: 20
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 });
 
 async function connectWithRetry(maxRetries = 10, delay = 10000) {
