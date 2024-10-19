@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { Pool } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -18,7 +18,7 @@ console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
 
 const app = express();
 
-const pool = new Pool({
+const pool = createPool({
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false

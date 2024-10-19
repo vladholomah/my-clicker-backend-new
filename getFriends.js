@@ -1,9 +1,9 @@
-import { Pool } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const pool = new Pool({
+const pool = createPool({
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false
