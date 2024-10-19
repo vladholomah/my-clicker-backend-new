@@ -1,14 +1,24 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
-import { sql } from "@vercel/postgres";
+import { Pool } from '@vercel/postgres';
 
 dotenv.config();
 
 console.log('FRONTEND_URL при запуску:', process.env.FRONTEND_URL);
-console.log('DB URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
+console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
 console.log('BOT_TOKEN (перші 10 символів):', process.env.BOT_TOKEN.substring(0, 10) + '...');
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
+
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL,
+  ssl: {
+    rejectUnauthorized: false
+  },
+  connectionTimeoutMillis: 30000,
+  idleTimeoutMillis: 60000,
+  max: 20
+});
 
 // Об'єкт для відстеження останнього часу виклику /start для кожного користувача
 const lastStartCommand = {};
@@ -19,14 +29,15 @@ bot.getMe().then((botInfo) => {
   console.error("Помилка отримання інформації про бота:", error);
 });
 
-async function connectWithRetry(maxRetries = 5, delay = 5000) {
+async function connectWithRetry(maxRetries = 10, delay = 10000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const result = await sql`SELECT NOW()`;
-      console.log('Підключення до бази даних успішне:', result);
+      const result = await pool.query('SELECT NOW()');
+      console.log('Підключення до бази даних успішне:', result.rows[0]);
       return;
     } catch (error) {
       console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
+      console.error('Деталі помилки:', error);
       if (i === maxRetries - 1) {
         console.error('Помилка підключення до бази даних:', error);
       }
@@ -46,33 +57,34 @@ const addReferralBonus = async (referrerId, newUserId, bonusAmount) => {
   console.log(`Додавання реферального бонусу: referrerId=${referrerId}, newUserId=${newUserId}, bonusAmount=${bonusAmount}`);
 
   try {
-    await sql.transaction(async (tx) => {
-      const { rows: referrer } = await tx`SELECT * FROM users WHERE telegram_id = ${referrerId}`;
-      const { rows: newUser } = await tx`SELECT * FROM users WHERE telegram_id = ${newUserId}`;
+    await pool.query('BEGIN');
+    const { rows: referrer } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [referrerId]);
+    const { rows: newUser } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [newUserId]);
 
-      if (referrer.length === 0 || newUser.length === 0) {
-        throw new Error('Referrer or new user not found');
-      }
+    if (referrer.length === 0 || newUser.length === 0) {
+      throw new Error('Referrer or new user not found');
+    }
 
-      await tx`
-        UPDATE users 
-        SET referrals = array_append(referrals, ${newUserId}),
-            coins = coins + ${bonusAmount},
-            total_coins = total_coins + ${bonusAmount}
-        WHERE telegram_id = ${referrerId}
-      `;
+    await pool.query(`
+      UPDATE users 
+      SET referrals = array_append(referrals, $1),
+          coins = coins + $2,
+          total_coins = total_coins + $2
+      WHERE telegram_id = $3
+    `, [newUserId, bonusAmount, referrerId]);
 
-      await tx`
-        UPDATE users
-        SET coins = coins + ${bonusAmount},
-            total_coins = total_coins + ${bonusAmount},
-            referred_by = ${referrerId}
-        WHERE telegram_id = ${newUserId}
-      `;
-    });
+    await pool.query(`
+      UPDATE users
+      SET coins = coins + $1,
+          total_coins = total_coins + $1,
+          referred_by = $2
+      WHERE telegram_id = $3
+    `, [bonusAmount, referrerId, newUserId]);
 
+    await pool.query('COMMIT');
     console.log('Реферальний бонус успішно додано');
   } catch (error) {
+    await pool.query('ROLLBACK');
     console.error('Помилка при додаванні реферального бонусу:', error);
     throw error;
   }
@@ -82,18 +94,15 @@ const getOrCreateUser = async (userId, firstName, lastName, username) => {
   console.log(`Спроба отримати або створити користувача: ${userId}`);
   console.log('Тип userId:', typeof userId);
   try {
-    const { rows } = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    const { rows } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(rows));
     if (rows.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
-      const insertQuery = sql`
-        INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, referred_by, avatar, level)
-        VALUES (${userId}, ${firstName || 'Невідомий'}, ${lastName || ''}, ${username || ''}, 0, 0, ${referralCode}, ARRAY[]::bigint[], NULL, NULL, 'Новачок')
-        RETURNING *
-      `;
-      console.log('SQL запит для створення користувача:', insertQuery);
-      const { rows: newUser } = await insertQuery;
+      const { rows: newUser } = await pool.query(
+        'INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, referred_by, avatar, level) VALUES ($1, $2, $3, $4, 0, 0, $5, ARRAY[]::bigint[], NULL, NULL, $6) RETURNING *',
+        [userId, firstName || 'Невідомий', lastName || '', username || '', referralCode, 'Новачок']
+      );
       console.log('Новий користувач створений:', JSON.stringify(newUser[0]));
       return newUser[0];
     } else {
@@ -129,7 +138,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     if (referralCode && user.referred_by === null) {
       console.log(`Обробка реферального коду: ${referralCode}`);
       try {
-        const { rows: referrer } = await sql`SELECT * FROM users WHERE referral_code = ${referralCode}`;
+        const { rows: referrer } = await pool.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
         if (referrer.length > 0 && referrer[0].telegram_id !== userId) {
           await addReferralBonus(referrer[0].telegram_id, userId, 5000);
           console.log('Реферальний бонус додано');

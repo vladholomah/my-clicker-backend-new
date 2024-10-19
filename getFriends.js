@@ -1,16 +1,27 @@
-import { sql } from "@vercel/postgres";
+import { Pool } from '@vercel/postgres';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-async function connectWithRetry(maxRetries = 5, delay = 5000) {
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL,
+  ssl: {
+    rejectUnauthorized: false
+  },
+  connectionTimeoutMillis: 30000,
+  idleTimeoutMillis: 60000,
+  max: 20
+});
+
+async function connectWithRetry(maxRetries = 10, delay = 10000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const result = await sql`SELECT NOW()`;
-      console.log('Підключення до бази даних успішне:', result);
+      const result = await pool.query('SELECT NOW()');
+      console.log('Підключення до бази даних успішне:', result.rows[0]);
       return;
     } catch (error) {
       console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
+      console.error('Деталі помилки:', error);
       if (i === maxRetries - 1) {
         console.error('Помилка підключення до бази даних:', error);
       }
@@ -36,9 +47,7 @@ export default async (req, res) => {
     await connectWithRetry();
 
     // Отримуємо дані користувача
-    const { rows: user } = await sql`
-      SELECT * FROM users WHERE telegram_id = ${userId}
-    `;
+    const { rows: user } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
 
     if (user.length === 0) {
       console.error('Користувача не знайдено');
@@ -48,11 +57,11 @@ export default async (req, res) => {
     console.log('Користувач знайдений:', user[0]);
 
     // Отримуємо дані друзів (рефералів) користувача
-    const { rows: friends } = await sql`
+    const { rows: friends } = await pool.query(`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users 
-      WHERE telegram_id = ANY(${user[0].referrals})
-    `;
+      WHERE telegram_id = ANY($1)
+    `, [user[0].referrals]);
 
     console.log('Знайдено друзів:', friends.length);
 

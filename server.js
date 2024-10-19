@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { sql } from "@vercel/postgres";
+import { Pool } from '@vercel/postgres';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -12,21 +12,32 @@ dotenv.config();
 console.log('Starting server...');
 console.log('Environment variables:');
 console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('Database URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
+console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
 console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'Set' : 'Not set');
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
 
 const app = express();
 
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL,
+  ssl: {
+    rejectUnauthorized: false
+  },
+  connectionTimeoutMillis: 30000,
+  idleTimeoutMillis: 60000,
+  max: 20
+});
+
 // Функція для підключення до бази даних з повторними спробами
-async function connectWithRetry(maxRetries = 5, delay = 5000) {
+async function connectWithRetry(maxRetries = 10, delay = 10000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const result = await sql`SELECT NOW()`;
-      console.log('Підключення до бази даних успішне:', result);
+      const result = await pool.query('SELECT NOW()');
+      console.log('Підключення до бази даних успішне:', result.rows[0]);
       return;
     } catch (error) {
       console.error(`Спроба ${i + 1} не вдалася. Повторна спроба через ${delay / 1000} секунд...`);
+      console.error('Деталі помилки:', error);
       if (i === maxRetries - 1) {
         console.error('Помилка підключення до бази даних:', error);
       }
@@ -39,7 +50,7 @@ async function connectWithRetry(maxRetries = 5, delay = 5000) {
 // Функція для створення таблиці, якщо вона не існує
 const createTableIfNotExists = async () => {
   try {
-    await sql`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
         first_name TEXT,
@@ -53,7 +64,7 @@ const createTableIfNotExists = async () => {
         avatar TEXT,
         level TEXT DEFAULT 'Новачок'
       )
-    `;
+    `);
     console.log('Таблиця users успішно створена або вже існує');
   } catch (error) {
     console.error('Помилка при створенні таблиці users:', error);
@@ -119,7 +130,7 @@ const setWebhook = async () => {
   try {
     const webhookInfo = await bot.getWebHookInfo();
     if (!webhookInfo.url) {
-      const webhookUrl = `${process.env.REACT_APP_API_URL.replace(/\/$/, '')}/bot${process.env.BOT_TOKEN}`;
+      const webhookUrl = `${process.env.REACT_APP_API_URL}/bot${process.env.BOT_TOKEN}`;
       console.log('Setting webhook URL:', webhookUrl);
       await bot.setWebHook(webhookUrl, {
         max_connections: 40,
@@ -159,19 +170,16 @@ app.post('/api/initUser', async (req, res) => {
 
   try {
     console.log('Спроба ініціалізації користувача:', userId);
-    let { rows: user } = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    let { rows: user } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
 
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
-      const insertQuery = sql`
-        INSERT INTO users (telegram_id, referral_code, coins, total_coins, level)
-        VALUES (${userId}, ${referralCode}, 0, 0, 'Новачок')
-        RETURNING *
-      `;
-      console.log('SQL запит для створення користувача:', insertQuery);
-      const { rows: newUser } = await insertQuery;
+      const { rows: newUser } = await pool.query(
+        'INSERT INTO users (telegram_id, referral_code, coins, total_coins, level) VALUES ($1, $2, 0, 0, $3) RETURNING *',
+        [userId, referralCode, 'Новачок']
+      );
       console.log('Результат створення нового користувача:', JSON.stringify(newUser));
       user = newUser;
     }
@@ -199,16 +207,16 @@ app.get('/api/getUserData', async (req, res) => {
   }
 
   try {
-    const { rows: user } = await sql`SELECT * FROM users WHERE telegram_id = ${userId}`;
+    const { rows: user } = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const { rows: friends } = await sql`
+    const { rows: friends } = await pool.query(`
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users
-      WHERE telegram_id = ANY(${user[0].referrals})
-    `;
+      WHERE telegram_id = ANY($1)
+    `, [user[0].referrals]);
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
 
@@ -246,12 +254,12 @@ app.post('/api/updateUserCoins', async (req, res) => {
   }
 
   try {
-    const { rows: result } = await sql`
+    const { rows: result } = await pool.query(`
       UPDATE users
-      SET coins = coins + ${coinsToAdd}, total_coins = total_coins + ${coinsToAdd}
-      WHERE telegram_id = ${userId}
+      SET coins = coins + $1, total_coins = total_coins + $1
+      WHERE telegram_id = $2
       RETURNING coins, total_coins
-    `;
+    `, [coinsToAdd, userId]);
 
     if (result.length === 0) {
       return res.status(404).json({ error: 'User not found' });
@@ -271,9 +279,9 @@ app.get('/api/getFriends', getFriends);
 
 app.get('/api/test-db', async (req, res) => {
   try {
-    const result = await sql`SELECT NOW()`;
-    console.log('Database test query result:', result);
-    res.json({ success: true, currentTime: result[0].now });
+    const result = await pool.query('SELECT NOW()');
+    console.log('Database test query result:', result.rows[0]);
+    res.json({ success: true, currentTime: result.rows[0].now });
   } catch (error) {
     console.error('Database test query error:', error);
     res.status(500).json({ success: false, error: error.message });
