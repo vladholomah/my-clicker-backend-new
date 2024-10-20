@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { pool } from './db.js';
+import { pool, testConnection } from './db.js';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -58,8 +58,13 @@ app.use((req, res, next) => {
 });
 
 // Test route
-app.get('/test', (req, res) => {
-  res.send('Server is working!');
+app.get('/test', async (req, res) => {
+  const isConnected = await testConnection();
+  if (isConnected) {
+    res.send('Server is working and connected to the database!');
+  } else {
+    res.status(500).send('Server is working, but database connection failed!');
+  }
 });
 
 // Webhook route
@@ -114,55 +119,6 @@ app.post('/api/initUser', async (req, res) => {
   } catch (error) {
     if (client) await client.query('ROLLBACK');
     console.error('Error initializing user:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
-  } finally {
-    if (client) client.release();
-  }
-});
-
-app.post('/api/processReferral', async (req, res) => {
-  const { referralCode, userId } = req.body;
-
-  if (!referralCode || !userId) {
-    return res.status(400).json({ error: 'Referral code and user ID are required' });
-  }
-
-  let client;
-  try {
-    client = await pool.connect();
-    await client.query('BEGIN');
-
-    const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
-    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-
-    if (referrer.length === 0 || user.length === 0 || user[0].referred_by !== null) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Invalid referral or user already referred' });
-    }
-
-    const bonusAmount = 5000;
-    await client.query(`
-      UPDATE users 
-      SET referrals = array_append(referrals, $1),
-          coins = coins + $2,
-          total_coins = total_coins + $2
-      WHERE telegram_id = $3
-    `, [userId, bonusAmount, referrer[0].telegram_id]);
-
-    await client.query(`
-      UPDATE users
-      SET coins = coins + $1,
-          total_coins = total_coins + $1,
-          referred_by = $2
-      WHERE telegram_id = $3
-    `, [bonusAmount, referrer[0].telegram_id, userId]);
-
-    await client.query('COMMIT');
-
-    res.json({ success: true, message: 'Referral processed successfully' });
-  } catch (error) {
-    if (client) await client.query('ROLLBACK');
-    console.error('Error processing referral:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
   } finally {
     if (client) client.release();
@@ -259,21 +215,6 @@ app.post('/api/updateUserCoins', async (req, res) => {
 
 app.get('/api/getFriends', getFriends);
 
-app.get('/api/test-db', async (req, res) => {
-  let client;
-  try {
-    client = await pool.connect();
-    const result = await client.query('SELECT NOW()');
-    console.log('Database test query result:', result.rows[0]);
-    res.json({ success: true, currentTime: result.rows[0].now });
-  } catch (error) {
-    console.error('Database test query error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  } finally {
-    if (client) client.release();
-  }
-});
-
 app.get('/', (req, res) => {
   res.send('Holmah Coin Bot Server is running!');
 });
@@ -289,8 +230,14 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
+  const isConnected = await testConnection();
+  if (isConnected) {
+    console.log('Successfully connected to the database');
+  } else {
+    console.error('Failed to connect to the database');
+  }
 });
 
 export default app;

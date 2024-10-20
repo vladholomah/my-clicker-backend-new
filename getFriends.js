@@ -14,14 +14,12 @@ export default async (req, res) => {
   let client;
   try {
     client = await pool.connect();
-    await client.query('BEGIN');
 
     // Отримуємо дані користувача
     const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
 
     if (user.length === 0) {
       console.error('Користувача не знайдено');
-      await client.query('ROLLBACK');
       return res.status(404).json({ success: false, error: 'Користувача не знайдено' });
     }
 
@@ -50,8 +48,6 @@ export default async (req, res) => {
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
     console.log('Згенеровано реферальне посилання:', referralLink);
 
-    await client.query('COMMIT');
-
     res.status(200).json({
       success: true,
       friends: friendsData,
@@ -63,7 +59,6 @@ export default async (req, res) => {
 
     console.log('Успішно відправлено дані про друзів');
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
     console.error('Помилка при отриманні даних друзів:', error);
     res.status(500).json({ success: false, error: 'Внутрішня помилка сервера', details: error.message });
   } finally {

@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
-import { pool } from './db.js';
+import { pool, testConnection } from './db.js';
 
 dotenv.config();
 
@@ -46,68 +46,46 @@ async function handleStart(msg) {
       reply_markup: keyboard
     });
     console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
-  } catch (sendError) {
-    console.error('Помилка при відправці повідомлення:', sendError);
-    throw sendError;
-  }
 
-  // Перевірка на наявність реферального коду
-  const referralCode = msg.text.split(' ')[1];
-  if (referralCode) {
-    console.log(`Отримано реферальний код: ${referralCode}`);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-      if (user.length > 0 && user[0].referred_by === null) {
-        await processReferral(client, referralCode, userId);
-      } else {
-        console.log('Користувач вже був запрошений раніше або не існує');
-      }
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Помилка при обробці реферального коду:', error);
-    } finally {
-      client.release();
+    // Перевірка з'єднання з базою даних перед виконанням операцій
+    const isConnected = await testConnection();
+    if (isConnected) {
+      await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    } else {
+      console.error('Не вдалося підключитися до бази даних. Користувач не буде ініціалізований.');
     }
-  }
-}
-
-async function processReferral(client, referralCode, newUserId) {
-  const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
-  if (referrer.length > 0 && referrer[0].telegram_id !== newUserId) {
-    await addReferralBonus(client, referrer[0].telegram_id, newUserId, 5000);
-    console.log('Реферальний бонус додано');
-    await bot.sendMessage(newUserId, 'Вітаємо! Ви отримали реферальний бонус!');
-  }
-}
-
-async function addReferralBonus(client, referrerId, newUserId, bonusAmount) {
-  console.log(`Додавання реферального бонусу: referrerId=${referrerId}, newUserId=${newUserId}, bonusAmount=${bonusAmount}`);
-
-  try {
-    await client.query(`
-      UPDATE users 
-      SET referrals = array_append(referrals, $1),
-          coins = coins + $2,
-          total_coins = total_coins + $2
-      WHERE telegram_id = $3
-    `, [newUserId, bonusAmount, referrerId]);
-
-    await client.query(`
-      UPDATE users
-      SET coins = coins + $1,
-          total_coins = total_coins + $1,
-          referred_by = $2
-      WHERE telegram_id = $3
-    `, [bonusAmount, referrerId, newUserId]);
-
-    console.log('Реферальний бонус успішно додано');
   } catch (error) {
-    console.error('Помилка при додаванні реферального бонусу:', error);
-    throw error;
+    console.error('Помилка при обробці команди /start:', error);
+    await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше.');
   }
+}
+
+async function initializeUser(userId, firstName, lastName, username) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+    if (rows.length === 0) {
+      const referralCode = generateReferralCode();
+      await client.query(
+        'INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, level) VALUES ($1, $2, $3, $4, 0, 0, $5, ARRAY[]::bigint[], $6)',
+        [userId, firstName || 'Невідомий', lastName || '', username || '', referralCode, 'Новачок']
+      );
+      console.log('Новий користувач створений:', userId);
+    } else {
+      console.log('Користувач вже існує:', userId);
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Помилка при ініціалізації користувача:', error);
+  } finally {
+    client.release();
+  }
+}
+
+function generateReferralCode() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
 bot.getMe().then((botInfo) => {
