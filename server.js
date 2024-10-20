@@ -53,6 +53,12 @@ app.use((req, res, next) => {
   next();
 });
 
+app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
+  console.log('Отримано оновлення від Telegram:', JSON.stringify(req.body));
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
 const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 };
@@ -219,7 +225,6 @@ app.use((err, req, res, next) => {
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Тут ви можете додати логіку для graceful shutdown, якщо потрібно
 });
 
 const PORT = process.env.PORT || 3001;

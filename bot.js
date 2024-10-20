@@ -9,26 +9,23 @@ console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGR
 console.log('BOT_TOKEN (перші 10 символів):', process.env.BOT_TOKEN.substring(0, 10) + '...');
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, {
-  polling: true
+  webHook: {
+    port: process.env.PORT
+  }
 });
 
 bot.on('text', async (msg) => {
   console.log('Отримано повідомлення:', msg.text);
   if (msg.text.startsWith('/start')) {
+    console.log('Обробка команди /start');
     await handleStart(msg);
   }
 });
 
-bot.on('polling_error', (error) => {
-  console.error('Помилка polling:', error);
-});
-
 async function handleStart(msg) {
-  console.log('Обробка команди /start');
+  console.log('Початок обробки команди /start');
   const chatId = msg.chat.id;
   const userId = msg.from.id;
-
-  console.log(`Обробка /start для користувача ${userId} в чаті ${chatId}`);
 
   try {
     const user = await getOrCreateUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
@@ -46,7 +43,7 @@ async function handleStart(msg) {
 
     try {
       await new Promise(resolve => setTimeout(resolve, 1000)); // Затримка 1 секунда
-      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до Holmah Coin! Натисніть кнопку нижче, щоб почати гру:', {
+      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
         reply_markup: keyboard
       });
       console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
