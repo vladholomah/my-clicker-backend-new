@@ -31,9 +31,10 @@ async function handleStart(msg) {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
+  const client = await pool.connect();
   try {
     console.log('Спроба отримати/створити користувача');
-    const user = await getOrCreateUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    const user = await getOrCreateUser(client, userId, msg.from.first_name, msg.from.last_name, msg.from.username);
     console.log('Користувач:', user);
 
     const keyboard = {
@@ -61,7 +62,7 @@ async function handleStart(msg) {
     if (referralCode) {
       console.log(`Отримано реферальний код: ${referralCode}`);
       if (user.referred_by === null) {
-        await processReferral(referralCode, userId);
+        await processReferral(client, referralCode, userId);
       } else {
         console.log('Користувач вже був запрошений раніше');
       }
@@ -73,12 +74,13 @@ async function handleStart(msg) {
     } catch (finalError) {
       console.error('Не вдалося відправити повідомлення про помилку:', finalError);
     }
+  } finally {
+    client.release();
   }
 }
 
-async function getOrCreateUser(userId, firstName, lastName, username) {
+async function getOrCreateUser(client, userId, firstName, lastName, username) {
   console.log('Початок getOrCreateUser:', { userId, firstName, lastName, username });
-  const client = await pool.connect();
   try {
     await client.query('BEGIN');
     let { rows } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
@@ -99,8 +101,6 @@ async function getOrCreateUser(userId, firstName, lastName, username) {
     await client.query('ROLLBACK');
     console.error('Помилка при отриманні/створенні користувача:', error);
     throw error;
-  } finally {
-    client.release();
   }
 }
 
@@ -108,13 +108,12 @@ function generateReferralCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-async function processReferral(referralCode, newUserId) {
-  const client = await pool.connect();
+async function processReferral(client, referralCode, newUserId) {
   try {
     await client.query('BEGIN');
     const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
     if (referrer.length > 0 && referrer[0].telegram_id !== newUserId) {
-      await addReferralBonus(referrer[0].telegram_id, newUserId, 5000);
+      await addReferralBonus(client, referrer[0].telegram_id, newUserId, 5000);
       console.log('Реферальний бонус додано');
       await bot.sendMessage(newUserId, 'Вітаємо! Ви отримали реферальний бонус!');
     }
@@ -122,17 +121,13 @@ async function processReferral(referralCode, newUserId) {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Помилка при обробці реферального коду:', error);
-  } finally {
-    client.release();
   }
 }
 
-async function addReferralBonus(referrerId, newUserId, bonusAmount) {
+async function addReferralBonus(client, referrerId, newUserId, bonusAmount) {
   console.log(`Додавання реферального бонусу: referrerId=${referrerId}, newUserId=${newUserId}, bonusAmount=${bonusAmount}`);
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
     await client.query(`
       UPDATE users 
       SET referrals = array_append(referrals, $1),
@@ -149,14 +144,10 @@ async function addReferralBonus(referrerId, newUserId, bonusAmount) {
       WHERE telegram_id = $3
     `, [bonusAmount, referrerId, newUserId]);
 
-    await client.query('COMMIT');
     console.log('Реферальний бонус успішно додано');
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Помилка при додаванні реферального бонусу:', error);
     throw error;
-  } finally {
-    client.release();
   }
 }
 

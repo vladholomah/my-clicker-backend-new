@@ -23,16 +23,17 @@ pool.on('connect', () => {
 });
 
 async function testConnection() {
+  let client;
   try {
-    const client = await pool.connect();
-    try {
-      const result = await client.query('SELECT NOW()');
-      console.log('Database connection test successful:', result.rows[0]);
-    } finally {
-      client.release();
-    }
+    client = await pool.connect();
+    const result = await client.query('SELECT NOW()');
+    console.log('Database connection test successful:', result.rows[0]);
   } catch (err) {
     console.error('Error testing database connection:', err);
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 }
 
