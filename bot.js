@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
-import { pool, testConnection } from './db.js';
+import { pool } from './db.js';
 
 dotenv.config();
 
@@ -47,12 +47,12 @@ async function handleStart(msg) {
     });
     console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
 
-    // Робота з базою даних після відправки повідомлення
+    // Ініціалізація користувача після відправки повідомлення
     try {
       await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
     } catch (dbError) {
       console.error('Помилка при роботі з базою даних:', dbError);
-      // Не відправляємо повідомлення про помилку користувачу, оскільки повідомлення вже відправлено
+      // Не блокуємо виконання, навіть якщо є помилка з базою даних
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
@@ -84,7 +84,7 @@ async function initializeUser(userId, firstName, lastName, username) {
   } catch (error) {
     if (client) await client.query('ROLLBACK');
     console.error('Помилка при ініціалізації користувача:', error);
-    throw error; // Перекидаємо помилку для обробки в handleStart
+    throw error;
   } finally {
     if (client) client.release();
   }
