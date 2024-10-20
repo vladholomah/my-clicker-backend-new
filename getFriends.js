@@ -11,8 +11,9 @@ export default async (req, res) => {
     return res.status(400).json({ success: false, error: 'Потрібен userId' });
   }
 
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
 
     // Отримуємо дані користувача
@@ -20,6 +21,7 @@ export default async (req, res) => {
 
     if (user.length === 0) {
       console.error('Користувача не знайдено');
+      await client.query('ROLLBACK');
       return res.status(404).json({ success: false, error: 'Користувача не знайдено' });
     }
 
@@ -61,10 +63,10 @@ export default async (req, res) => {
 
     console.log('Успішно відправлено дані про друзів');
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK');
     console.error('Помилка при отриманні даних друзів:', error);
     res.status(500).json({ success: false, error: 'Внутрішня помилка сервера', details: error.message });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 };

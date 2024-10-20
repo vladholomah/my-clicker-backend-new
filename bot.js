@@ -26,12 +26,6 @@ bot.on('polling_error', (error) => {
   console.error('Помилка при опитуванні Telegram API:', error);
 });
 
-bot.getMe().then((botInfo) => {
-  console.log("Бот успішно запущено. Інформація про бота:", botInfo);
-}).catch((error) => {
-  console.error("Помилка при отриманні інформації про бота:", error);
-});
-
 async function handleStart(msg) {
   console.log('Початок обробки команди /start');
   const chatId = msg.chat.id;
@@ -61,7 +55,6 @@ async function handleStart(msg) {
       console.error('Помилка при відправці повідомлення:', sendError);
       throw sendError;
     }
-
 
     // Перевірка на наявність реферального коду
     const referralCode = msg.text.split(' ')[1];

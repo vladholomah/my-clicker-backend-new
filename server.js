@@ -80,8 +80,9 @@ app.post('/api/initUser', async (req, res) => {
     return res.status(400).json({ error: 'User ID is required' });
   }
 
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
     console.log('Спроба ініціалізації користувача:', userId);
     let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
@@ -111,11 +112,11 @@ app.post('/api/initUser', async (req, res) => {
       level: user[0].level
     });
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK');
     console.error('Error initializing user:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -125,11 +126,13 @@ app.get('/api/getUserData', async (req, res) => {
     return res.status(400).json({ error: 'User ID is required' });
   }
 
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
     const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -165,11 +168,11 @@ app.get('/api/getUserData', async (req, res) => {
       }))
     });
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK');
     console.error('Error fetching user data:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -179,8 +182,9 @@ app.post('/api/updateUserCoins', async (req, res) => {
     return res.status(400).json({ error: 'User ID and coins amount are required' });
   }
 
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
     const { rows: result } = await client.query(`
       UPDATE users
@@ -190,6 +194,7 @@ app.post('/api/updateUserCoins', async (req, res) => {
     `, [coinsToAdd, userId]);
 
     if (result.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -200,19 +205,20 @@ app.post('/api/updateUserCoins', async (req, res) => {
       newTotalCoins: result[0].total_coins
     });
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK');
     console.error('Error updating user coins:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
 app.get('/api/getFriends', getFriends);
 
 app.get('/api/test-db', async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const result = await client.query('SELECT NOW()');
     console.log('Database test query result:', result.rows[0]);
     res.json({ success: true, currentTime: result.rows[0].now });
@@ -220,7 +226,7 @@ app.get('/api/test-db', async (req, res) => {
     console.error('Database test query error:', error);
     res.status(500).json({ success: false, error: error.message });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
