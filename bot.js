@@ -47,17 +47,27 @@ async function handleStart(msg) {
     });
     console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
 
-    // Після відправки повідомлення виконуємо операції з базою даних
-    await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    // Робота з базою даних після відправки повідомлення
+    try {
+      await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    } catch (dbError) {
+      console.error('Помилка при роботі з базою даних:', dbError);
+      // Не відправляємо повідомлення про помилку користувачу, оскільки повідомлення вже відправлено
+    }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
-    await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Але ви все одно можете почати гру, натиснувши кнопку вище.');
+    try {
+      await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше або зверніться до підтримки.');
+    } catch (sendError) {
+      console.error('Помилка при відправці повідомлення про помилку:', sendError);
+    }
   }
 }
 
 async function initializeUser(userId, firstName, lastName, username) {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
     const { rows } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (rows.length === 0) {
@@ -72,10 +82,11 @@ async function initializeUser(userId, firstName, lastName, username) {
     }
     await client.query('COMMIT');
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK');
     console.error('Помилка при ініціалізації користувача:', error);
+    throw error; // Перекидаємо помилку для обробки в handleStart
   } finally {
-    client.release();
+    if (client) client.release();
   }
 }
 
