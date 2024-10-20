@@ -31,96 +31,55 @@ async function handleStart(msg) {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
-  const client = await pool.connect();
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: 'Play Game', web_app: { url: `${process.env.FRONTEND_URL}?userId=${userId}` } }]
+    ]
+  };
+
+  console.log('Підготовка до відправки повідомлення з кнопкою "Play Game"');
+  console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+  console.log('Keyboard:', JSON.stringify(keyboard));
+
   try {
-    console.log('Спроба отримати/створити користувача');
-    const user = await getOrCreateUser(client, userId, msg.from.first_name, msg.from.last_name, msg.from.username);
-    console.log('Користувач:', user);
+    const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
+      reply_markup: keyboard
+    });
+    console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
+  } catch (sendError) {
+    console.error('Помилка при відправці повідомлення:', sendError);
+    throw sendError;
+  }
 
-    const keyboard = {
-      inline_keyboard: [
-        [{ text: 'Play Game', web_app: { url: `${process.env.FRONTEND_URL}?userId=${userId}` } }]
-      ]
-    };
-
-    console.log('Підготовка до відправки повідомлення з кнопкою "Play Game"');
-    console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-    console.log('Keyboard:', JSON.stringify(keyboard));
-
+  // Перевірка на наявність реферального коду
+  const referralCode = msg.text.split(' ')[1];
+  if (referralCode) {
+    console.log(`Отримано реферальний код: ${referralCode}`);
+    const client = await pool.connect();
     try {
-      const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
-        reply_markup: keyboard
-      });
-      console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
-    } catch (sendError) {
-      console.error('Помилка при відправці повідомлення:', sendError);
-      throw sendError;
-    }
-
-    // Перевірка на наявність реферального коду
-    const referralCode = msg.text.split(' ')[1];
-    if (referralCode) {
-      console.log(`Отримано реферальний код: ${referralCode}`);
-      if (user.referred_by === null) {
+      await client.query('BEGIN');
+      const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+      if (user.length > 0 && user[0].referred_by === null) {
         await processReferral(client, referralCode, userId);
       } else {
-        console.log('Користувач вже був запрошений раніше');
+        console.log('Користувач вже був запрошений раніше або не існує');
       }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Помилка при обробці реферального коду:', error);
+    } finally {
+      client.release();
     }
-  } catch (error) {
-    console.error('Помилка при обробці команди /start:', error);
-    try {
-      await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше.');
-    } catch (finalError) {
-      console.error('Не вдалося відправити повідомлення про помилку:', finalError);
-    }
-  } finally {
-    client.release();
   }
-}
-
-async function getOrCreateUser(client, userId, firstName, lastName, username) {
-  console.log('Початок getOrCreateUser:', { userId, firstName, lastName, username });
-  try {
-    await client.query('BEGIN');
-    let { rows } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-    console.log('Результат запиту SELECT:', rows);
-    if (rows.length === 0) {
-      console.log('Користувача не знайдено, створюємо нового');
-      const referralCode = generateReferralCode();
-      const { rows: newUser } = await client.query(
-        'INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, level) VALUES ($1, $2, $3, $4, 0, 0, $5, ARRAY[]::bigint[], $6) RETURNING *',
-        [userId, firstName || 'Невідомий', lastName || '', username || '', referralCode, 'Новачок']
-      );
-      console.log('Новий користувач створений:', newUser);
-      rows = newUser;
-    }
-    await client.query('COMMIT');
-    return rows[0];
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Помилка при отриманні/створенні користувача:', error);
-    throw error;
-  }
-}
-
-function generateReferralCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
 async function processReferral(client, referralCode, newUserId) {
-  try {
-    await client.query('BEGIN');
-    const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
-    if (referrer.length > 0 && referrer[0].telegram_id !== newUserId) {
-      await addReferralBonus(client, referrer[0].telegram_id, newUserId, 5000);
-      console.log('Реферальний бонус додано');
-      await bot.sendMessage(newUserId, 'Вітаємо! Ви отримали реферальний бонус!');
-    }
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Помилка при обробці реферального коду:', error);
+  const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
+  if (referrer.length > 0 && referrer[0].telegram_id !== newUserId) {
+    await addReferralBonus(client, referrer[0].telegram_id, newUserId, 5000);
+    console.log('Реферальний бонус додано');
+    await bot.sendMessage(newUserId, 'Вітаємо! Ви отримали реферальний бонус!');
   }
 }
 

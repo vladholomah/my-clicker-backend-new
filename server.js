@@ -120,6 +120,55 @@ app.post('/api/initUser', async (req, res) => {
   }
 });
 
+app.post('/api/processReferral', async (req, res) => {
+  const { referralCode, userId } = req.body;
+
+  if (!referralCode || !userId) {
+    return res.status(400).json({ error: 'Referral code and user ID are required' });
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+
+    const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
+    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+
+    if (referrer.length === 0 || user.length === 0 || user[0].referred_by !== null) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invalid referral or user already referred' });
+    }
+
+    const bonusAmount = 5000;
+    await client.query(`
+      UPDATE users 
+      SET referrals = array_append(referrals, $1),
+          coins = coins + $2,
+          total_coins = total_coins + $2
+      WHERE telegram_id = $3
+    `, [userId, bonusAmount, referrer[0].telegram_id]);
+
+    await client.query(`
+      UPDATE users
+      SET coins = coins + $1,
+          total_coins = total_coins + $1,
+          referred_by = $2
+      WHERE telegram_id = $3
+    `, [bonusAmount, referrer[0].telegram_id, userId]);
+
+    await client.query('COMMIT');
+
+    res.json({ success: true, message: 'Referral processed successfully' });
+  } catch (error) {
+    if (client) await client.query('ROLLBACK');
+    console.error('Error processing referral:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 app.get('/api/getUserData', async (req, res) => {
   const { userId } = req.query;
   if (!userId) {
@@ -129,10 +178,8 @@ app.get('/api/getUserData', async (req, res) => {
   let client;
   try {
     client = await pool.connect();
-    await client.query('BEGIN');
     const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user.length === 0) {
-      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -143,8 +190,6 @@ app.get('/api/getUserData', async (req, res) => {
     `, [user[0].referrals]);
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
-
-    await client.query('COMMIT');
 
     res.json({
       telegramId: user[0].telegram_id.toString(),
@@ -168,7 +213,6 @@ app.get('/api/getUserData', async (req, res) => {
       }))
     });
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
     console.error('Error fetching user data:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
