@@ -45,17 +45,18 @@ async function handleStart(msg) {
     const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
       reply_markup: keyboard
     });
-    console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
+    console.log('Повідомлення успішно відправлено:', sentMessage);
 
     // Ініціалізація користувача після відправки повідомлення
     try {
-      await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+       await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+      console.log('Користувач успішно ініціалізований');
     } catch (dbError) {
-      console.error('Помилка при роботі з базою даних:', dbError);
-      // Не блокуємо виконання, навіть якщо є помилка з базою даних
+      console.error('Помилка при ініціалізації користувача:', dbError);
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
+    console.log('Завершення обробки команди /start');
     try {
       await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше або зверніться до підтримки.');
     } catch (sendError) {
@@ -68,6 +69,7 @@ async function initializeUser(userId, firstName, lastName, username) {
   let client;
   try {
     client = await pool.connect();
+     console.log('Підключено до бази даних');
     await client.query('BEGIN');
     const { rows } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (rows.length === 0) {
