@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { pool, testConnection } from './db.js';
+import { pool } from './db.js';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -58,13 +58,8 @@ app.use((req, res, next) => {
 });
 
 // Test route
-app.get('/test', async (req, res) => {
-  const isConnected = await testConnection();
-  if (isConnected) {
-    res.send('Server is working and connected to the database!');
-  } else {
-    res.status(500).send('Server is working, but database connection failed!');
-  }
+app.get('/test', (req, res) => {
+  res.send('Server is working!');
 });
 
 // Webhook route
@@ -88,6 +83,7 @@ app.post('/api/initUser', async (req, res) => {
   let client;
   try {
     client = await pool.connect();
+    console.log('Connected to database for user initialization');
     await client.query('BEGIN');
     console.log('Спроба ініціалізації користувача:', userId);
     let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
@@ -107,6 +103,7 @@ app.post('/api/initUser', async (req, res) => {
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
 
     await client.query('COMMIT');
+    console.log('Transaction committed');
 
     res.json({
       telegramId: user[0].telegram_id.toString(),
@@ -121,7 +118,10 @@ app.post('/api/initUser', async (req, res) => {
     console.error('Error initializing user:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
   } finally {
-    if (client) client.release();
+    if (client) {
+      client.release();
+      console.log('Database connection released');
+    }
   }
 });
 
@@ -134,6 +134,7 @@ app.get('/api/getUserData', async (req, res) => {
   let client;
   try {
     client = await pool.connect();
+    console.log('Connected to database for getUserData');
     const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user.length === 0) {
       return res.status(404).json({ error: 'User not found' });
@@ -172,7 +173,10 @@ app.get('/api/getUserData', async (req, res) => {
     console.error('Error fetching user data:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
-    if (client) client.release();
+    if (client) {
+      client.release();
+      console.log('Database connection released');
+    }
   }
 });
 
@@ -185,6 +189,7 @@ app.post('/api/updateUserCoins', async (req, res) => {
   let client;
   try {
     client = await pool.connect();
+    console.log('Connected to database for updateUserCoins');
     await client.query('BEGIN');
     const { rows: result } = await client.query(`
       UPDATE users
@@ -199,6 +204,7 @@ app.post('/api/updateUserCoins', async (req, res) => {
     }
 
     await client.query('COMMIT');
+    console.log('Transaction committed');
 
     res.json({
       newCoins: result[0].coins,
@@ -209,11 +215,32 @@ app.post('/api/updateUserCoins', async (req, res) => {
     console.error('Error updating user coins:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
-    if (client) client.release();
+    if (client) {
+      client.release();
+      console.log('Database connection released');
+    }
   }
 });
 
 app.get('/api/getFriends', getFriends);
+
+app.get('/api/test-db', async (req, res) => {
+  let client;
+  try {
+    client = await pool.connect();
+    const result = await client.query('SELECT NOW()');
+    console.log('Database test query result:', result.rows[0]);
+    res.json({ success: true, currentTime: result.rows[0].now });
+  } catch (error) {
+    console.error('Database test query error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    if (client) {
+      client.release();
+      console.log('Database connection released');
+    }
+  }
+});
 
 app.get('/', (req, res) => {
   res.send('Holmah Coin Bot Server is running!');
@@ -232,11 +259,12 @@ process.on('unhandledRejection', (reason, promise) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
-  const isConnected = await testConnection();
-  if (isConnected) {
+  try {
+    const client = await pool.connect();
     console.log('Successfully connected to the database');
-  } else {
-    console.error('Failed to connect to the database');
+    client.release();
+  } catch (err) {
+    console.error('Error connecting to the database:', err);
   }
 });
 
