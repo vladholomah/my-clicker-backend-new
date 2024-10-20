@@ -89,6 +89,7 @@ async function getOrCreateUser(userId, firstName, lastName, username) {
     return rows[0];
   } catch (error) {
     await client.query('ROLLBACK');
+    console.error('Помилка при отриманні/створенні користувача:', error);
     throw error;
   } finally {
     client.release();

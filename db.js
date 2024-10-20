@@ -14,6 +14,14 @@ export const pool = createPool({
   keepAlive: true
 });
 
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+});
+
+pool.on('connect', () => {
+  console.log('Connected to the database');
+});
+
 async function testConnection() {
   try {
     const client = await pool.connect();

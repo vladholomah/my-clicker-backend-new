@@ -37,7 +37,7 @@ const limiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  trustProxy: false,
+  trustProxy: true,
   keyGenerator: (req) => {
     return req.ip;
   }
