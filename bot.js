@@ -22,12 +22,23 @@ bot.on('text', async (msg) => {
   }
 });
 
+bot.on('polling_error', (error) => {
+  console.error('Помилка при опитуванні Telegram API:', error);
+});
+
+bot.getMe().then((botInfo) => {
+  console.log("Бот успішно запущено. Інформація про бота:", botInfo);
+}).catch((error) => {
+  console.error("Помилка при отриманні інформації про бота:", error);
+});
+
 async function handleStart(msg) {
   console.log('Початок обробки команди /start');
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
   try {
+    console.log('Спроба отримати/створити користувача');
     const user = await getOrCreateUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
     console.log('Користувач:', user);
 
@@ -42,7 +53,6 @@ async function handleStart(msg) {
     console.log('Keyboard:', JSON.stringify(keyboard));
 
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Затримка 1 секунда
       const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
         reply_markup: keyboard
       });
@@ -51,6 +61,7 @@ async function handleStart(msg) {
       console.error('Помилка при відправці повідомлення:', sendError);
       throw sendError;
     }
+
 
     // Перевірка на наявність реферального коду
     const referralCode = msg.text.split(' ')[1];
@@ -73,16 +84,20 @@ async function handleStart(msg) {
 }
 
 async function getOrCreateUser(userId, firstName, lastName, username) {
+  console.log('Початок getOrCreateUser:', { userId, firstName, lastName, username });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     let { rows } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+    console.log('Результат запиту SELECT:', rows);
     if (rows.length === 0) {
+      console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
       const { rows: newUser } = await client.query(
         'INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, level) VALUES ($1, $2, $3, $4, 0, 0, $5, ARRAY[]::bigint[], $6) RETURNING *',
         [userId, firstName || 'Невідомий', lastName || '', username || '', referralCode, 'Новачок']
       );
+      console.log('Новий користувач створений:', newUser);
       rows = newUser;
     }
     await client.query('COMMIT');
