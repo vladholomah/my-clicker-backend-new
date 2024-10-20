@@ -37,26 +37,21 @@ async function handleStart(msg) {
     ]
   };
 
-  console.log('Підготовка до відправки повідомлення з кнопкою "Play Game"');
-  console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-  console.log('Keyboard:', JSON.stringify(keyboard));
-
   try {
+    console.log('Підготовка до відправки повідомлення з кнопкою "Play Game"');
+    console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+    console.log('Keyboard:', JSON.stringify(keyboard));
+
     const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
       reply_markup: keyboard
     });
     console.log('Повідомлення з кнопкою "Play Game" відправлено:', sentMessage);
 
-    // Перевірка з'єднання з базою даних перед виконанням операцій
-    const isConnected = await testConnection();
-    if (isConnected) {
-      await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
-    } else {
-      console.error('Не вдалося підключитися до бази даних. Користувач не буде ініціалізований.');
-    }
+    // Після відправки повідомлення виконуємо операції з базою даних
+    await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
-    await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше.');
+    await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Але ви все одно можете почати гру, натиснувши кнопку вище.');
   }
 }
 
