@@ -70,4 +70,3 @@ export default async (req, res) => {
     if (client) client.release();
   }
 };
-dsvsdvc
