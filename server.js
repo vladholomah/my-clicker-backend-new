@@ -30,6 +30,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -46,15 +47,24 @@ app.use(limiter);
 
 console.log('Rate limiter configuration:', JSON.stringify(limiter.options, null, 2));
 
+// Logging middleware
 app.use((req, res, next) => {
-  console.log(`Received ${req.method} request to ${req.url}`);
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
   console.log('IP:', req.ip);
   console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
+  console.log('Headers:', JSON.stringify(req.headers));
+  console.log('Body:', JSON.stringify(req.body));
   next();
 });
 
+// Test route
+app.get('/test', (req, res) => {
+  res.send('Server is working!');
+});
+
+// Webhook route
 app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
-  console.log('Отримано оновлення від Telegram:', JSON.stringify(req.body));
+  console.log('Received update from Telegram:', JSON.stringify(req.body));
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
@@ -218,6 +228,7 @@ app.get('/', (req, res) => {
   res.send('Holmah Coin Bot Server is running!');
 });
 
+// Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
   res.status(500).send('Something broke!');
