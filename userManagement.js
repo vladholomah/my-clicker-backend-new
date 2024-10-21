@@ -86,10 +86,13 @@ export async function processReferral(referralCode, userId) {
     await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
 
     // Нараховуємо бонуси (наприклад, 10 монет) обом користувачам
-    await client.query('UPDATE users SET coins = coins + 10, total_coins = total_coins + 10 WHERE telegram_id IN ($1, $2)', [referrer[0].telegram_id, userId]);
+    const bonusCoins = 10;
+    await client.query('UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
+      [bonusCoins, referrer[0].telegram_id, userId]);
 
     await client.query('COMMIT');
-    return { success: true, message: 'Referral processed successfully' };
+    console.log('Referral processed successfully');
+    return { success: true, message: 'Referral processed successfully', bonusCoins };
   } catch (error) {
     if (client) await client.query('ROLLBACK');
     console.error('Error processing referral:', error);

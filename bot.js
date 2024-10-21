@@ -54,11 +54,16 @@ async function handleStart(msg) {
       // Обробка реферального коду, якщо він є
       const startParam = msg.text.split(' ')[1];
       if (startParam) {
-        await processReferral(startParam, userId);
-        console.log('Реферальний код оброблено:', startParam);
+        const referralResult = await processReferral(startParam, userId);
+        console.log('Реферальний код оброблено:', referralResult);
+
+        if (referralResult.success) {
+          await bot.sendMessage(chatId, `Вітаємо! Ви успішно використали реферальний код та отримали бонус!`);
+        }
       }
     } catch (dbError) {
       console.error('Помилка при ініціалізації користувача або обробці реферального коду:', dbError);
+      await bot.sendMessage(chatId, 'Виникла помилка при обробці вашого запиту. Будь ласка, спробуйте ще раз пізніше.');
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
@@ -70,6 +75,23 @@ async function handleStart(msg) {
     }
   }
 }
+
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const userId = query.from.id;
+
+  if (query.data === 'invite_friends') {
+    try {
+      const userData = await getUserData(userId);
+      const inviteLink = `https://t.me/${process.env.BOT_USERNAME}?start=${userData.referralCode}`;
+      await bot.answerCallbackQuery(query.id);
+      await bot.sendMessage(chatId, `Ось ваше реферальне посилання: ${inviteLink}\nПоділіться ним з друзями і отримайте бонуси!`);
+    } catch (error) {
+      console.error('Помилка при отриманні реферального посилання:', error);
+      await bot.answerCallbackQuery(query.id, { text: 'Виникла помилка. Спробуйте пізніше.' });
+    }
+  }
+});
 
 bot.getMe().then((botInfo) => {
   console.log("Бот успішно запущено. Інформація про бота:", botInfo);

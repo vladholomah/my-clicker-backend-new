@@ -5,7 +5,6 @@ import { pool } from './db.js';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import getFriends from './getFriends.js';
 import { initializeUser, processReferral, getUserData, updateUserCoins } from './userManagement.js';
 
 dotenv.config();
@@ -116,8 +115,6 @@ app.post('/api/updateUserCoins', async (req, res) => {
   }
 });
 
-app.get('/api/getFriends', getFriends);
-
 app.post('/api/processReferral', async (req, res) => {
   const { referralCode, userId } = req.body;
   if (!referralCode || !userId) {
@@ -134,20 +131,15 @@ app.post('/api/processReferral', async (req, res) => {
 });
 
 app.get('/api/test-db', async (req, res) => {
-  let client;
   try {
-    client = await pool.connect();
+    const client = await pool.connect();
     const result = await client.query('SELECT NOW()');
+    client.release();
     console.log('Database test query result:', result.rows[0]);
     res.json({ success: true, currentTime: result.rows[0].now });
   } catch (error) {
     console.error('Database test query error:', error);
     res.status(500).json({ success: false, error: error.message });
-  } finally {
-    if (client) {
-      client.release();
-      console.log('Database connection released');
-    }
   }
 });
 
