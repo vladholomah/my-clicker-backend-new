@@ -14,8 +14,8 @@ export async function initializeUser(userId, firstName, lastName, username) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
       const { rows: newUser } = await client.query(
-        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level) VALUES ($1, $2, $3, $4, $5, 0, 0, $6) RETURNING *',
-        [userId, firstName || 'Невідомий', lastName || '', username || '', referralCode, 'Новачок']
+        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, referrals) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
+        [userId, firstName || 'Невідомий', lastName || '', username || '', referralCode, 'Новачок', []]
       );
       console.log('Результат створення нового користувача:', JSON.stringify(newUser));
       user = newUser;
@@ -42,7 +42,8 @@ export async function initializeUser(userId, firstName, lastName, username) {
       referralLink: referralLink,
       coins: user[0].coins,
       totalCoins: user[0].total_coins,
-      level: user[0].level
+      level: user[0].level,
+      referrals: user[0].referrals
     };
   } catch (error) {
     if (client) await client.query('ROLLBACK');
@@ -75,15 +76,13 @@ export async function processReferral(referralCode, userId) {
 
     // Перевіряємо, чи користувач вже не був зареєстрований за рефералом
     const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-    if (user[0].referred_by) {
+    if (user[0].referrals && user[0].referrals.includes(referrer[0].telegram_id)) {
       throw new Error('User already referred');
     }
 
-    // Оновлюємо дані користувача, який був запрошений
-    await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
-
-    // Додаємо нового реферала до списку рефералів запрошувача
+    // Оновлюємо список рефералів для обох користувачів
     await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
+    await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
 
     // Нараховуємо бонуси (наприклад, 10 монет) обом користувачам
     const bonusCoins = 10;
