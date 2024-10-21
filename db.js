@@ -46,7 +46,7 @@ export async function initializeDatabase() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
-        first_name VARCHAR(255),
+        first_name VARCHAR(255) NOT NULL,
         last_name VARCHAR(255),
         username VARCHAR(255),
         referral_code VARCHAR(10) UNIQUE,
@@ -68,9 +68,18 @@ export async function initializeDatabase() {
   }
 }
 
+export async function closePool() {
+  try {
+    await pool.end();
+    console.log('Database pool closed successfully');
+  } catch (err) {
+    console.error('Error closing database pool:', err);
+  }
+}
+
 process.on('exit', async () => {
   console.log('Closing database pool...');
-  await pool.end();
+  await closePool();
 });
 
 export default pool;
