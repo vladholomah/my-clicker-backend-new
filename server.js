@@ -6,6 +6,7 @@ import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import getFriends from './getFriends.js';
+import { initializeUser, processReferral, getUserData, updateUserCoins } from './userManagement.js';
 
 dotenv.config();
 
@@ -69,10 +70,6 @@ app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
-const generateReferralCode = () => {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
-};
-
 app.post('/api/initUser', async (req, res) => {
   const { userId } = req.body;
 
@@ -80,48 +77,12 @@ app.post('/api/initUser', async (req, res) => {
     return res.status(400).json({ error: 'User ID is required' });
   }
 
-  let client;
   try {
-    client = await pool.connect();
-    console.log('Connected to database for user initialization');
-    await client.query('BEGIN');
-    console.log('Спроба ініціалізації користувача:', userId);
-    let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-    console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
-
-    if (user.length === 0) {
-      console.log('Користувача не знайдено, створюємо нового');
-      const referralCode = generateReferralCode();
-      const { rows: newUser } = await client.query(
-        'INSERT INTO users (telegram_id, referral_code, coins, total_coins, level) VALUES ($1, $2, 0, 0, $3) RETURNING *',
-        [userId, referralCode, 'Новачок']
-      );
-      console.log('Результат створення нового користувача:', JSON.stringify(newUser));
-      user = newUser;
-    }
-
-    const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
-
-    await client.query('COMMIT');
-    console.log('Transaction committed');
-
-    res.json({
-      telegramId: user[0].telegram_id.toString(),
-      referralCode: user[0].referral_code,
-      referralLink: referralLink,
-      coins: user[0].coins,
-      totalCoins: user[0].total_coins,
-      level: user[0].level
-    });
+    const userData = await initializeUser(userId);
+    res.json(userData);
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
     console.error('Error initializing user:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
-  } finally {
-    if (client) {
-      client.release();
-      console.log('Database connection released');
-    }
   }
 });
 
@@ -131,52 +92,12 @@ app.get('/api/getUserData', async (req, res) => {
     return res.status(400).json({ error: 'User ID is required' });
   }
 
-  let client;
   try {
-    client = await pool.connect();
-    console.log('Connected to database for getUserData');
-    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-    if (user.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const { rows: friends } = await client.query(`
-      SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
-      FROM users
-      WHERE telegram_id = ANY($1)
-    `, [user[0].referrals]);
-
-    const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
-
-    res.json({
-      telegramId: user[0].telegram_id.toString(),
-      firstName: user[0].first_name,
-      lastName: user[0].last_name,
-      username: user[0].username,
-      coins: user[0].coins,
-      totalCoins: user[0].total_coins,
-      level: user[0].level,
-      referralCode: user[0].referral_code,
-      referralLink: referralLink,
-      friends: friends.map(friend => ({
-        telegramId: friend.telegram_id.toString(),
-        firstName: friend.first_name,
-        lastName: friend.last_name,
-        username: friend.username,
-        coins: friend.coins,
-        totalCoins: friend.total_coins,
-        level: friend.level,
-        avatar: friend.avatar
-      }))
-    });
+    const userData = await getUserData(userId);
+    res.json(userData);
   } catch (error) {
     console.error('Error fetching user data:', error);
     res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    if (client) {
-      client.release();
-      console.log('Database connection released');
-    }
   }
 });
 
@@ -186,43 +107,31 @@ app.post('/api/updateUserCoins', async (req, res) => {
     return res.status(400).json({ error: 'User ID and coins amount are required' });
   }
 
-  let client;
   try {
-    client = await pool.connect();
-    console.log('Connected to database for updateUserCoins');
-    await client.query('BEGIN');
-    const { rows: result } = await client.query(`
-      UPDATE users
-      SET coins = coins + $1, total_coins = total_coins + $1
-      WHERE telegram_id = $2
-      RETURNING coins, total_coins
-    `, [coinsToAdd, userId]);
-
-    if (result.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    await client.query('COMMIT');
-    console.log('Transaction committed');
-
-    res.json({
-      newCoins: result[0].coins,
-      newTotalCoins: result[0].total_coins
-    });
+    const result = await updateUserCoins(userId, coinsToAdd);
+    res.json(result);
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
     console.error('Error updating user coins:', error);
     res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    if (client) {
-      client.release();
-      console.log('Database connection released');
-    }
   }
 });
 
 app.get('/api/getFriends', getFriends);
+
+app.post('/api/processReferral', async (req, res) => {
+  const { referralCode, userId } = req.body;
+  if (!referralCode || !userId) {
+    return res.status(400).json({ error: 'Referral code and user ID are required' });
+  }
+
+  try {
+    const result = await processReferral(referralCode, userId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error processing referral:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 app.get('/api/test-db', async (req, res) => {
   let client;

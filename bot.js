@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
-import { pool } from './db.js';
+import { initializeUser, processReferral, getUserData } from './userManagement.js';
 
 dotenv.config();
 
@@ -47,12 +47,18 @@ async function handleStart(msg) {
     });
     console.log('Повідомлення успішно відправлено:', sentMessage);
 
-    // Ініціалізація користувача після відправки повідомлення
     try {
-       await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
-      console.log('Користувач успішно ініціалізований');
+      const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+      console.log('Користувач успішно ініціалізований:', userData);
+
+      // Обробка реферального коду, якщо він є
+      const startParam = msg.text.split(' ')[1];
+      if (startParam) {
+        await processReferral(startParam, userId);
+        console.log('Реферальний код оброблено:', startParam);
+      }
     } catch (dbError) {
-      console.error('Помилка при ініціалізації користувача:', dbError);
+      console.error('Помилка при ініціалізації користувача або обробці реферального коду:', dbError);
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
@@ -63,37 +69,6 @@ async function handleStart(msg) {
       console.error('Помилка при відправці повідомлення про помилку:', sendError);
     }
   }
-}
-
-async function initializeUser(userId, firstName, lastName, username) {
-  let client;
-  try {
-    client = await pool.connect();
-     console.log('Підключено до бази даних');
-    await client.query('BEGIN');
-    const { rows } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-    if (rows.length === 0) {
-      const referralCode = generateReferralCode();
-      await client.query(
-        'INSERT INTO users (telegram_id, first_name, last_name, username, coins, total_coins, referral_code, referrals, level) VALUES ($1, $2, $3, $4, 0, 0, $5, ARRAY[]::bigint[], $6)',
-        [userId, firstName || 'Невідомий', lastName || '', username || '', referralCode, 'Новачок']
-      );
-      console.log('Новий користувач створений:', userId);
-    } else {
-      console.log('Користувач вже існує:', userId);
-    }
-    await client.query('COMMIT');
-  } catch (error) {
-    if (client) await client.query('ROLLBACK');
-    console.error('Помилка при ініціалізації користувача:', error);
-    throw error;
-  } finally {
-    if (client) client.release();
-  }
-}
-
-function generateReferralCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
 bot.getMe().then((botInfo) => {
