@@ -1,8 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
-import userManagement from './userManagement.js';
-
-const { initializeUser, processReferral, getUserData } = userManagement;
+import { initializeUser, processReferral, getUserData } from './userManagement.js';
 
 dotenv.config();
 
@@ -50,95 +48,58 @@ async function handleStart(msg) {
     console.log('Повідомлення успішно відправлено:', sentMessage);
 
     try {
-      // Отримуємо аватар користувача
-      let avatarUrl = null;
-      try {
-        const photos = await bot.getUserProfilePhotos(userId, { limit: 1 });
-        if (photos && photos.total_count > 0) {
-          avatarUrl = await bot.getFileLink(photos.photos[0][0].file_id);
+      const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 }).then(photos => {
+        if (photos.total_count > 0) {
+          return bot.getFileLink(photos.photos[0][0].file_id);
         }
-      } catch (photoError) {
-        console.error('Помилка при отриманні фото профілю:', photoError);
-      }
+        return null;
+      });
 
-      // Ініціалізуємо користувача
-      const userData = await initializeUser(
-        userId,
-        msg.from.first_name,
-        msg.from.last_name,
-        msg.from.username,
-        avatarUrl
-      );
+      const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username, avatarUrl);
       console.log('Користувач успішно ініціалізований:', userData);
 
-      // Обробка реферального коду
+      // Обробка реферального коду, якщо він є
       const startParam = msg.text.split(' ')[1];
-      if (startParam && userData) {
-        try {
-          const referralResult = await processReferral(startParam, userId);
-          console.log('Реферальний код оброблено:', referralResult);
+      if (startParam) {
+        const referralResult = await processReferral(startParam, userId);
+        console.log('Реферальний код оброблено:', referralResult);
 
-          if (referralResult.success) {
-            await bot.sendMessage(
-              chatId,
-              `Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`
-            );
-          }
-        } catch (referralError) {
-          console.error('Помилка при обробці реферального коду:', referralError);
-          if (referralError.message === 'User already referred') {
-            await bot.sendMessage(chatId, 'Ви вже використовували реферальний код.');
-          } else if (referralError.message === 'Cannot use own referral code') {
-            await bot.sendMessage(chatId, 'Ви не можете використовувати власний реферальний код.');
-          } else if (referralError.message === 'Invalid referral code') {
-            await bot.sendMessage(chatId, 'Недійсний реферальний код.');
-          }
+        if (referralResult.success) {
+          await bot.sendMessage(chatId, `Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`);
         }
       }
     } catch (dbError) {
-      console.error('Помилка при ініціалізації користувача:', dbError);
-      await bot.sendMessage(
-        chatId,
-        'Виникла помилка при обробці вашого запиту. Будь ласка, спробуйте ще раз пізніше.'
-      );
+      console.error('Помилка при ініціалізації користувача або обробці реферального коду:', dbError);
+      await bot.sendMessage(chatId, 'Виникла помилка при обробці вашого запиту. Будь ласка, спробуйте ще раз пізніше.');
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
+    console.log('Завершення обробки команди /start');
     try {
-      await bot.sendMessage(
-        chatId,
-        'Вибачте, сталася помилка. Спробуйте ще раз пізніше або зверніться до підтримки.'
-      );
+      await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше або зверніться до підтримки.');
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення про помилку:', sendError);
     }
   }
 }
 
-// Обробка callback queries
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const userId = query.from.id;
 
-  try {
-    if (query.data === 'invite_friends') {
+  if (query.data === 'invite_friends') {
+    try {
       const userData = await getUserData(userId);
       const inviteLink = `https://t.me/${process.env.BOT_USERNAME}?start=${userData.referralCode}`;
       await bot.answerCallbackQuery(query.id);
-      await bot.sendMessage(
-        chatId,
-        `Ось ваше реферальне посилання: ${inviteLink}\nПоділіться ним з друзями і отримайте бонуси!`
-      );
+      await bot.sendMessage(chatId, `Ось ваше реферальне посилання: ${inviteLink}\nПоділіться ним з друзями і отримайте бонуси!`);
+    } catch (error) {
+      console.error('Помилка при отриманні реферального посилання:', error);
+      await bot.answerCallbackQuery(query.id, { text: 'Виникла помилка. Спробуйте пізніше.' });
     }
-  } catch (error) {
-    console.error('Помилка при обробці callback query:', error);
-    await bot.answerCallbackQuery(query.id, {
-      text: 'Виникла помилка. Спробуйте пізніше.'
-    });
   }
 });
 
-// Ініціалізація бота
 bot.getMe().then((botInfo) => {
   console.log("Бот успішно запущено. Інформація про бота:", botInfo);
 }).catch((error) => {

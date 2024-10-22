@@ -1,24 +1,12 @@
 import { pool } from './db.js';
 
-// Допоміжна функція для генерації реферального коду
-function generateReferralCode(length = 6) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let code = '';
-  for (let i = 0; i < length; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-}
-
-// Ініціалізація користувача
-export async function initializeUser(userId, firstName = '', lastName = null, username = null, avatarUrl = null) {
+export async function initializeUser(userId, firstName, lastName, username, avatarUrl) {
   let client;
   try {
     client = await pool.connect();
     console.log('Connected to database for user initialization');
     await client.query('BEGIN');
     console.log('Спроба ініціалізації користувача:', userId);
-
     let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
 
@@ -26,8 +14,8 @@ export async function initializeUser(userId, firstName = '', lastName = null, us
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
       const { rows: newUser } = await client.query(
-        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar, referrals) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, $8) RETURNING *',
-        [userId, firstName || '', lastName, username, referralCode, 'Beginner', avatarUrl, []]
+        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
+        [userId, firstName || null, lastName || null, username || null, referralCode, 'Новачок', avatarUrl]
       );
       console.log('Результат створення нового користувача:', JSON.stringify(newUser));
       user = newUser;
@@ -35,7 +23,7 @@ export async function initializeUser(userId, firstName = '', lastName = null, us
       console.log('Користувач вже існує, оновлюємо дані');
       const { rows: updatedUser } = await client.query(
         'UPDATE users SET first_name = $2, last_name = $3, username = $4, avatar = $5 WHERE telegram_id = $1 RETURNING *',
-        [userId, firstName || '', lastName, username, avatarUrl]
+        [userId, firstName || null, lastName || null, username || null, avatarUrl]
       );
       user = updatedUser;
     }
@@ -62,11 +50,13 @@ export async function initializeUser(userId, firstName = '', lastName = null, us
     console.error('Error initializing user:', error);
     throw error;
   } finally {
-    if (client) client.release();
+    if (client) {
+      client.release();
+      console.log('Database connection released');
+    }
   }
 }
 
-// Обробка реферального коду
 export async function processReferral(referralCode, userId) {
   let client;
   try {
@@ -75,55 +65,37 @@ export async function processReferral(referralCode, userId) {
 
     console.log(`Processing referral: code=${referralCode}, userId=${userId}`);
 
-    const { rows: referrer } = await client.query(
-      'SELECT * FROM users WHERE referral_code = $1',
-      [referralCode]
-    );
-
+    // Знаходимо користувача, який надав реферальний код
+    const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
     if (referrer.length === 0) {
       throw new Error('Invalid referral code');
     }
 
-    if (referrer[0].telegram_id === parseInt(userId)) {
+    // Перевіряємо, чи користувач не використовує свій власний код
+    if (referrer[0].telegram_id === userId) {
       throw new Error('Cannot use own referral code');
     }
 
-    const { rows: user } = await client.query(
-      'SELECT * FROM users WHERE telegram_id = $1',
-      [userId]
-    );
-
+    // Перевіряємо, чи користувач вже не був зареєстрований за рефералом
+    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user[0].referred_by) {
       throw new Error('User already referred');
     }
 
-    // Оновлюємо дані користувача
-    await client.query(
-      'UPDATE users SET referred_by = $1 WHERE telegram_id = $2',
-      [referrer[0].telegram_id, userId]
-    );
+    // Оновлюємо дані користувача, який був запрошений
+    await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
 
-    // Додаємо нового реферала
-    await client.query(
-      'UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2',
-      [userId, referrer[0].telegram_id]
-    );
+    // Додаємо нового реферала до списку рефералів запрошувача
+    await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
 
-    // Нараховуємо бонуси
+    // Нараховуємо бонуси (наприклад, 10 монет) обом користувачам
     const bonusCoins = 10;
-    await client.query(
-      'UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
-      [bonusCoins, referrer[0].telegram_id, userId]
-    );
+    await client.query('UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
+      [bonusCoins, referrer[0].telegram_id, userId]);
 
     await client.query('COMMIT');
     console.log('Referral processed successfully');
-
-    return {
-      success: true,
-      message: 'Referral processed successfully',
-      bonusCoins
-    };
+    return { success: true, message: 'Referral processed successfully', bonusCoins };
   } catch (error) {
     if (client) await client.query('ROLLBACK');
     console.error('Error processing referral:', error);
@@ -133,16 +105,12 @@ export async function processReferral(referralCode, userId) {
   }
 }
 
-// Отримання даних користувача
 export async function getUserData(userId) {
   let client;
   try {
     client = await pool.connect();
-    const { rows: user } = await client.query(
-      'SELECT * FROM users WHERE telegram_id = $1',
-      [userId]
-    );
-
+    console.log('Connected to database for getUserData');
+    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user.length === 0) {
       throw new Error('User not found');
     }
@@ -181,13 +149,45 @@ export async function getUserData(userId) {
     console.error('Error fetching user data:', error);
     throw error;
   } finally {
-    if (client) client.release();
+    if (client) {
+      client.release();
+      console.log('Database connection released');
+    }
   }
 }
 
-// Експортуємо всі функції
-export default {
-  initializeUser,
-  processReferral,
-  getUserData
-};
+export async function updateUserCoins(userId, coinsToAdd) {
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const { rows: result } = await client.query(`
+      UPDATE users
+      SET coins = coins + $1, total_coins = total_coins + $1
+      WHERE telegram_id = $2
+      RETURNING coins, total_coins
+    `, [coinsToAdd, userId]);
+
+    if (result.length === 0) {
+      throw new Error('User not found');
+    }
+
+    await client.query('COMMIT');
+    return {
+      newCoins: result[0].coins,
+      newTotalCoins: result[0].total_coins
+    };
+  } catch (error) {
+    if (client) await client.query('ROLLBACK');
+    console.error('Error updating user coins:', error);
+    throw error;
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+}
+
+function generateReferralCode() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
