@@ -7,6 +7,7 @@ export async function initializeUser(userId, firstName, lastName, username, avat
     console.log('Connected to database for user initialization');
     await client.query('BEGIN');
     console.log('Спроба ініціалізації користувача:', userId);
+
     let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
 
@@ -22,7 +23,7 @@ export async function initializeUser(userId, firstName, lastName, username, avat
     } else {
       console.log('Користувач вже існує, оновлюємо дані');
       const { rows: updatedUser } = await client.query(
-        'UPDATE users SET first_name = $2, last_name = $3, username = $4, avatar = $5 WHERE telegram_id = $1 RETURNING *',
+        'UPDATE users SET first_name = $2, last_name = $3, username = $4, avatar = COALESCE($5, avatar) WHERE telegram_id = $1 RETURNING *',
         [userId, firstName || null, lastName || null, username || null, avatarUrl]
       );
       user = updatedUser;
@@ -43,7 +44,7 @@ export async function initializeUser(userId, firstName, lastName, username, avat
       coins: user[0].coins,
       totalCoins: user[0].total_coins,
       level: user[0].level,
-      avatar: user[0].avatar
+      photoUrl: user[0].avatar
     };
   } catch (error) {
     if (client) await client.query('ROLLBACK');
@@ -65,31 +66,24 @@ export async function processReferral(referralCode, userId) {
 
     console.log(`Processing referral: code=${referralCode}, userId=${userId}`);
 
-    // Знаходимо користувача, який надав реферальний код
     const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
     if (referrer.length === 0) {
       throw new Error('Invalid referral code');
     }
 
-    // Перевіряємо, чи користувач не використовує свій власний код
     if (referrer[0].telegram_id === userId) {
       throw new Error('Cannot use own referral code');
     }
 
-    // Перевіряємо, чи користувач вже не був зареєстрований за рефералом
     const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user[0].referred_by) {
       throw new Error('User already referred');
     }
 
-    // Оновлюємо дані користувача, який був запрошений
     await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
-
-    // Додаємо нового реферала до списку рефералів запрошувача
     await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
 
-    // Нараховуємо бонуси (наприклад, 10 монет) обом користувачам
-    const bonusCoins = 10;
+    const bonusCoins = 1000; // Збільшено бонус до 1000 монет
     await client.query('UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
       [bonusCoins, referrer[0].telegram_id, userId]);
 
@@ -119,7 +113,7 @@ export async function getUserData(userId) {
       SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users
       WHERE telegram_id = ANY($1)
-    `, [user[0].referrals]);
+    `, [user[0].referrals || []]);
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
 
@@ -133,7 +127,7 @@ export async function getUserData(userId) {
       level: user[0].level,
       referralCode: user[0].referral_code,
       referralLink: referralLink,
-      avatar: user[0].avatar,
+      photoUrl: user[0].avatar,
       friends: friends.map(friend => ({
         telegramId: friend.telegram_id.toString(),
         firstName: friend.first_name,
@@ -142,7 +136,7 @@ export async function getUserData(userId) {
         coins: friend.coins,
         totalCoins: friend.total_coins,
         level: friend.level,
-        avatar: friend.avatar
+        photoUrl: friend.avatar
       }))
     };
   } catch (error) {
@@ -182,9 +176,7 @@ export async function updateUserCoins(userId, coinsToAdd) {
     console.error('Error updating user coins:', error);
     throw error;
   } finally {
-    if (client) {
-      client.release();
-    }
+    if (client) client.release();
   }
 }
 

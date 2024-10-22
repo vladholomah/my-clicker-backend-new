@@ -14,6 +14,22 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
   }
 });
 
+async function getUserProfilePhoto(userId) {
+  try {
+    const photos = await bot.getUserProfilePhotos(userId, { limit: 1 });
+    if (photos && photos.total_count > 0) {
+      const fileLink = await bot.getFileLink(photos.photos[0][0].file_id);
+      console.log('Отримано фото профілю:', fileLink);
+      return fileLink;
+    }
+    console.log('Фото профілю не знайдено');
+    return null;
+  } catch (error) {
+    console.error('Помилка при отриманні фото профілю:', error);
+    return null;
+  }
+}
+
 bot.on('text', async (msg) => {
   console.log('Отримано повідомлення:', msg.text);
   if (msg.text.startsWith('/start')) {
@@ -48,12 +64,9 @@ async function handleStart(msg) {
     console.log('Повідомлення успішно відправлено:', sentMessage);
 
     try {
-      const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 }).then(photos => {
-        if (photos.total_count > 0) {
-          return bot.getFileLink(photos.photos[0][0].file_id);
-        }
-        return null;
-      });
+      // Отримуємо фото профілю
+      const avatarUrl = await getUserProfilePhoto(userId);
+      console.log('Отримано URL аватара:', avatarUrl);
 
       const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username, avatarUrl);
       console.log('Користувач успішно ініціалізований:', userData);
