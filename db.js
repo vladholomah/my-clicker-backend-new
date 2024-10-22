@@ -9,29 +9,22 @@ const poolConfig = {
   ssl: {
     rejectUnauthorized: false
   },
-  max: 5, // Зменшуємо максимальну кількість з'єднань для serverless середовища
-  min: 0, // Мінімальна кількість з'єднань
-  idleTimeoutMillis: 10000, // Час очікування перед закриттям неактивного з'єднання
-  connectionTimeoutMillis: 5000, // Таймаут підключення
-  maxUses: 7500, // Максимальна кількість використань одного з'єднання
+  max: 5,
+  min: 0,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
+  maxUses: 7500,
   keepAlive: true,
   allowExitOnIdle: true
 };
 
 // Створення пулу з обробкою помилок
-let pool;
-try {
-  pool = createPool(poolConfig);
-  console.log('Database pool created successfully');
-} catch (error) {
-  console.error('Error creating database pool:', error);
-  process.exit(1);
-}
+export const pool = createPool(poolConfig);
+console.log('Database pool created successfully');
 
 // Обробники подій пулу
 pool.on('connect', (client) => {
   console.log('New client connected to database');
-
   client.on('error', (err) => {
     console.error('Database client error:', err);
   });
@@ -161,32 +154,12 @@ export async function closePool() {
   }
 }
 
-// Обробка завершення процесу
-process.on('exit', async () => {
-  await closePool();
-});
-
-process.on('SIGINT', async () => {
-  await closePool();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  await closePool();
-  process.exit(0);
-});
-
-// Обробка необроблених помилок
-process.on('uncaughtException', async (error) => {
-  console.error('Uncaught Exception:', error);
-  await closePool();
-  process.exit(1);
-});
-
-process.on('unhandledRejection', async (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  await closePool();
-  process.exit(1);
-});
-
-export default pool;
+// Експортуємо весь пул як default
+export default {
+  pool,
+  getConnection,
+  executeQuery,
+  testConnection,
+  initializeDatabase,
+  closePool
+};
