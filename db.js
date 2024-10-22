@@ -128,4 +128,12 @@ process.once('SIGINT', async () => {
     await closePool();
 });
 
-export default getPool();
+// Експортуємо всі необхідні функції
+export {
+    getPool,
+    getConnection,
+    executeQuery,
+    testConnection,
+    initializeDatabase,
+    closePool
+};
