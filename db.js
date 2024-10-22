@@ -3,19 +3,25 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-export const pool = createPool({
+const poolConfig = {
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false
   },
-  max: 20,
+  max: 10, // Зменшуємо максимальну кількість з'єднань
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 5000, // Збільшуємо таймаут підключення
   keepAlive: true
-});
+};
 
-pool.on('error', (err) => {
+export const pool = createPool(poolConfig);
+
+// Додаємо обробку помилок пулу
+pool.on('error', (err, client) => {
   console.error('Unexpected error on idle client', err);
+  if (client) {
+    client.release(true); // Force release with error
+  }
 });
 
 pool.on('connect', () => {
@@ -34,7 +40,11 @@ export async function testConnection() {
     return false;
   } finally {
     if (client) {
-      client.release();
+      try {
+        client.release(true);
+      } catch (e) {
+        console.error('Error releasing client:', e);
+      }
     }
   }
 }
@@ -46,14 +56,14 @@ export async function initializeDatabase() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
-        first_name VARCHAR(255),
+        first_name VARCHAR(255) NOT NULL DEFAULT '',
         last_name VARCHAR(255),
         username VARCHAR(255),
         referral_code VARCHAR(10) UNIQUE,
         coins INTEGER DEFAULT 0,
         total_coins INTEGER DEFAULT 0,
         level VARCHAR(50) DEFAULT 'Новачок',
-        referrals BIGINT[],
+        referrals BIGINT[] DEFAULT ARRAY[]::BIGINT[],
         referred_by BIGINT,
         avatar VARCHAR(255)
       )
@@ -61,16 +71,39 @@ export async function initializeDatabase() {
     console.log('Database initialized successfully');
   } catch (err) {
     console.error('Error initializing database:', err);
+    throw err;
   } finally {
     if (client) {
-      client.release();
+      try {
+        client.release(true);
+      } catch (e) {
+        console.error('Error releasing client:', e);
+      }
     }
   }
 }
 
-process.on('exit', async () => {
-  console.log('Closing database pool...');
-  await pool.end();
+// Додаємо функцію для коректного закриття пулу
+export async function closePool() {
+  try {
+    await pool.end();
+    console.log('Database pool closed successfully');
+  } catch (err) {
+    console.error('Error closing database pool:', err);
+  }
+}
+
+// Обробка завершення процесу
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM signal');
+  await closePool();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('Received SIGINT signal');
+  await closePool();
+  process.exit(0);
 });
 
 export default pool;

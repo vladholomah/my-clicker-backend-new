@@ -6,6 +6,7 @@ export async function initializeUser(userId, firstName, lastName, username, avat
     client = await pool.connect();
     console.log('Connected to database for user initialization');
     await client.query('BEGIN');
+
     console.log('Спроба ініціалізації користувача:', userId);
     let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
@@ -13,19 +14,54 @@ export async function initializeUser(userId, firstName, lastName, username, avat
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
+      // Забезпечуємо, що first_name не буде null
+      const sanitizedFirstName = firstName || '';
       const { rows: newUser } = await client.query(
-        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
-        [userId, firstName || null, lastName || null, username || null, referralCode, 'Новачок', avatarUrl]
+        `INSERT INTO users 
+         (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar, referrals) 
+         VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, $8) 
+         RETURNING *`,
+        [userId, sanitizedFirstName, lastName, username, referralCode, 'Новачок', avatarUrl, []]
       );
       console.log('Результат створення нового користувача:', JSON.stringify(newUser));
       user = newUser;
     } else {
       console.log('Користувач вже існує, оновлюємо дані');
-      const { rows: updatedUser } = await client.query(
-        'UPDATE users SET first_name = $2, last_name = $3, username = $4, avatar = $5 WHERE telegram_id = $1 RETURNING *',
-        [userId, firstName || null, lastName || null, username || null, avatarUrl]
-      );
-      user = updatedUser;
+      // Оновлюємо тільки якщо передані нові дані
+      if (firstName || lastName || username || avatarUrl) {
+        const updates = [];
+        const values = [userId];
+        let valueIndex = 2;
+
+        if (firstName) {
+          updates.push(`first_name = $${valueIndex}`);
+          values.push(firstName);
+          valueIndex++;
+        }
+        if (lastName !== undefined) {
+          updates.push(`last_name = $${valueIndex}`);
+          values.push(lastName);
+          valueIndex++;
+        }
+        if (username !== undefined) {
+          updates.push(`username = $${valueIndex}`);
+          values.push(username);
+          valueIndex++;
+        }
+        if (avatarUrl) {
+          updates.push(`avatar = $${valueIndex}`);
+          values.push(avatarUrl);
+          valueIndex++;
+        }
+
+        if (updates.length > 0) {
+          const { rows: updatedUser } = await client.query(
+            `UPDATE users SET ${updates.join(', ')} WHERE telegram_id = $1 RETURNING *`,
+            values
+          );
+          user = updatedUser;
+        }
+      }
     }
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
@@ -46,13 +82,23 @@ export async function initializeUser(userId, firstName, lastName, username, avat
       avatar: user[0].avatar
     };
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Error during rollback:', rollbackError);
+      }
+    }
     console.error('Error initializing user:', error);
     throw error;
   } finally {
     if (client) {
-      client.release();
-      console.log('Database connection released');
+      try {
+        await client.release(true);
+        console.log('Database connection released');
+      } catch (releaseError) {
+        console.error('Error releasing client:', releaseError);
+      }
     }
   }
 }
