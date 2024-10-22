@@ -1,122 +1,258 @@
-import { pool } from './db.js';
+import { pool, isDatabaseReady } from './db.js';
 
-export async function initializeUser(userId, firstName, lastName, username, avatarUrl) {
-  let client;
-  try {
-    client = await pool.connect();
-    console.log('Connected to database for user initialization');
-    await client.query('BEGIN');
-    console.log('Спроба ініціалізації користувача:', userId);
-    let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-    console.log('Результат SQL-запиту SELECT:', JSON.stringify(user));
-
-    if (user.length === 0) {
-      console.log('Користувача не знайдено, створюємо нового');
-      const referralCode = generateReferralCode();
-      const { rows: newUser } = await client.query(
-        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
-        [userId, firstName || null, lastName || null, username || null, referralCode, 'Новачок', avatarUrl]
-      );
-      console.log('Результат створення нового користувача:', JSON.stringify(newUser));
-      user = newUser;
-    } else {
-      console.log('Користувач вже існує, оновлюємо дані');
-      const { rows: updatedUser } = await client.query(
-        'UPDATE users SET first_name = $2, last_name = $3, username = $4, avatar = $5 WHERE telegram_id = $1 RETURNING *',
-        [userId, firstName || null, lastName || null, username || null, avatarUrl]
-      );
-      user = updatedUser;
-    }
-
-    const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
-
-    await client.query('COMMIT');
-    console.log('Transaction committed');
-
-    return {
-      telegramId: user[0].telegram_id.toString(),
-      firstName: user[0].first_name,
-      lastName: user[0].last_name,
-      username: user[0].username,
-      referralCode: user[0].referral_code,
-      referralLink: referralLink,
-      coins: user[0].coins,
-      totalCoins: user[0].total_coins,
-      level: user[0].level,
-      avatar: user[0].avatar
-    };
-  } catch (error) {
-    if (client) await client.query('ROLLBACK');
-    console.error('Error initializing user:', error);
-    throw error;
-  } finally {
-    if (client) {
-      client.release();
-      console.log('Database connection released');
-    }
+// Утиліта для генерації унікального реферального коду
+function generateReferralCode(length = 6) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  for (let i = 0; i < length; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
+  return code;
 }
 
-export async function processReferral(referralCode, userId) {
-  let client;
-  try {
-    client = await pool.connect();
-    await client.query('BEGIN');
-
-    console.log(`Processing referral: code=${referralCode}, userId=${userId}`);
-
-    // Знаходимо користувача, який надав реферальний код
-    const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
-    if (referrer.length === 0) {
-      throw new Error('Invalid referral code');
-    }
-
-    // Перевіряємо, чи користувач не використовує свій власний код
-    if (referrer[0].telegram_id === userId) {
-      throw new Error('Cannot use own referral code');
-    }
-
-    // Перевіряємо, чи користувач вже не був зареєстрований за рефералом
-    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-    if (user[0].referred_by) {
-      throw new Error('User already referred');
-    }
-
-    // Оновлюємо дані користувача, який був запрошений
-    await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
-
-    // Додаємо нового реферала до списку рефералів запрошувача
-    await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
-
-    // Нараховуємо бонуси (наприклад, 10 монет) обом користувачам
-    const bonusCoins = 10;
-    await client.query('UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
-      [bonusCoins, referrer[0].telegram_id, userId]);
-
-    await client.query('COMMIT');
-    console.log('Referral processed successfully');
-    return { success: true, message: 'Referral processed successfully', bonusCoins };
-  } catch (error) {
-    if (client) await client.query('ROLLBACK');
-    console.error('Error processing referral:', error);
-    throw error;
-  } finally {
-    if (client) client.release();
+// Функція ініціалізації користувача з повторними спробами
+export async function initializeUser(userId, firstName, lastName, username, avatarUrl, maxAttempts = 3) {
+  if (!isDatabaseReady()) {
+    throw new Error('База даних не готова');
   }
+
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let client;
+    try {
+      client = await pool.connect();
+      console.log(`Спроба ініціалізації користувача ${attempt}/${maxAttempts}`);
+
+      await client.query('BEGIN');
+
+      // Перевіряємо чи існує користувач
+      let { rows: user } = await client.query(
+        'SELECT * FROM users WHERE telegram_id = $1',
+        [userId]
+      );
+
+      if (user.length === 0) {
+        console.log('Створення нового користувача...');
+        const referralCode = await generateUniqueReferralCode(client);
+        const { rows: newUser } = await client.query(`
+          INSERT INTO users (
+            telegram_id, 
+            first_name, 
+            last_name, 
+            username, 
+            referral_code, 
+            coins, 
+            total_coins, 
+            level, 
+            avatar,
+            referrals,
+            created_at,
+            last_active
+          ) VALUES ($1, $2, $3, $4, $5, 0, 0, 'Новачок', $6, ARRAY[]::BIGINT[], CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          RETURNING *
+        `, [userId, firstName || null, lastName || null, username || null, referralCode, avatarUrl]);
+
+        user = newUser;
+        console.log('Новий користувач створений:', newUser[0]);
+      } else {
+        console.log('Оновлення існуючого користувача...');
+        const { rows: updatedUser } = await client.query(`
+          UPDATE users 
+          SET 
+            first_name = COALESCE($2, first_name),
+            last_name = COALESCE($3, last_name),
+            username = COALESCE($4, username),
+            avatar = COALESCE($5, avatar),
+            last_active = CURRENT_TIMESTAMP
+          WHERE telegram_id = $1 
+          RETURNING *
+        `, [userId, firstName, lastName, username, avatarUrl]);
+
+        user = updatedUser;
+        console.log('Користувач оновлений:', updatedUser[0]);
+      }
+
+      await client.query('COMMIT');
+
+      const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
+
+      return {
+        telegramId: user[0].telegram_id.toString(),
+        firstName: user[0].first_name,
+        lastName: user[0].last_name,
+        username: user[0].username,
+        referralCode: user[0].referral_code,
+        referralLink: referralLink,
+        coins: user[0].coins,
+        totalCoins: user[0].total_coins,
+        level: user[0].level,
+        avatar: user[0].avatar,
+        createdAt: user[0].created_at,
+        lastActive: user[0].last_active
+      };
+    } catch (error) {
+      lastError = error;
+      console.error(`Помилка при ініціалізації користувача (спроба ${attempt}):`, error);
+
+      if (client) {
+        await client.query('ROLLBACK');
+      }
+
+      if (attempt === maxAttempts) {
+        throw new Error(`Не вдалося ініціалізувати користувача після ${maxAttempts} спроб: ${error.message}`);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  }
+
+  throw lastError;
 }
 
+// Генерація унікального реферального коду
+async function generateUniqueReferralCode(client, maxAttempts = 10) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const code = generateReferralCode();
+    const { rows } = await client.query(
+      'SELECT referral_code FROM users WHERE referral_code = $1',
+      [code]
+    );
+    if (rows.length === 0) {
+      return code;
+    }
+  }
+  throw new Error('Не вдалося згенерувати унікальний реферальний код');
+}
+
+// Обробка реферального коду
+export async function processReferral(referralCode, userId, maxAttempts = 3) {
+  if (!isDatabaseReady()) {
+    throw new Error('База даних не готова');
+  }
+
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query('BEGIN');
+
+      console.log(`Обробка реферального коду: ${referralCode} для користувача ${userId}`);
+
+      // Перевіряємо реферальний код
+      const { rows: referrer } = await client.query(
+        'SELECT * FROM users WHERE referral_code = $1',
+        [referralCode]
+      );
+
+      if (referrer.length === 0) {
+        throw new Error('Недійсний реферальний код');
+      }
+
+      // Перевіряємо чи користувач не використовує свій код
+      if (referrer[0].telegram_id === userId) {
+        throw new Error('Неможливо використати власний реферальний код');
+      }
+
+      // Перевіряємо чи користувач вже не був запрошений
+      const { rows: user } = await client.query(
+        'SELECT referred_by FROM users WHERE telegram_id = $1',
+        [userId]
+      );
+
+      if (user[0].referred_by) {
+        throw new Error('Користувач вже був запрошений');
+      }
+
+      const bonusCoins = 10;
+
+      // Оновлюємо дані запрошеного користувача
+      await client.query(`
+        UPDATE users 
+        SET 
+          referred_by = $1,
+          coins = coins + $2,
+          total_coins = total_coins + $2
+        WHERE telegram_id = $3
+      `, [referrer[0].telegram_id, bonusCoins, userId]);
+
+      // Оновлюємо дані запрошувача
+      await client.query(`
+        UPDATE users 
+        SET 
+          referrals = array_append(referrals, $1),
+          coins = coins + $2,
+          total_coins = total_coins + $2
+        WHERE telegram_id = $3
+      `, [userId, bonusCoins, referrer[0].telegram_id]);
+
+      await client.query('COMMIT');
+
+      return {
+        success: true,
+        message: 'Реферальний код успішно використано',
+        bonusCoins
+      };
+    } catch (error) {
+      lastError = error;
+      if (client) {
+        await client.query('ROLLBACK');
+      }
+
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+// Отримання даних користувача
 export async function getUserData(userId) {
+  if (!isDatabaseReady()) {
+    throw new Error('База даних не готова');
+  }
+
   let client;
   try {
     client = await pool.connect();
-    console.log('Connected to database for getUserData');
-    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+
+    // Оновлюємо last_active та отримуємо дані користувача
+    const { rows: user } = await client.query(`
+      UPDATE users 
+      SET last_active = CURRENT_TIMESTAMP 
+      WHERE telegram_id = $1 
+      RETURNING *
+    `, [userId]);
+
     if (user.length === 0) {
-      throw new Error('User not found');
+      throw new Error('Користувача не знайдено');
     }
 
+    // Отримуємо дані про друзів
     const { rows: friends } = await client.query(`
-      SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
+      SELECT 
+        telegram_id, 
+        first_name, 
+        last_name, 
+        username, 
+        coins, 
+        total_coins, 
+        level,
+        avatar,
+        created_at,
+        last_active
       FROM users
       WHERE telegram_id = ANY($1)
     `, [user[0].referrals]);
@@ -134,6 +270,8 @@ export async function getUserData(userId) {
       referralCode: user[0].referral_code,
       referralLink: referralLink,
       avatar: user[0].avatar,
+      createdAt: user[0].created_at,
+      lastActive: user[0].last_active,
       friends: friends.map(friend => ({
         telegramId: friend.telegram_id.toString(),
         firstName: friend.first_name,
@@ -142,52 +280,75 @@ export async function getUserData(userId) {
         coins: friend.coins,
         totalCoins: friend.total_coins,
         level: friend.level,
-        avatar: friend.avatar
+        avatar: friend.avatar,
+        createdAt: friend.created_at,
+        lastActive: friend.last_active
       }))
     };
   } catch (error) {
-    console.error('Error fetching user data:', error);
+    console.error('Помилка отримання даних користувача:', error);
     throw error;
   } finally {
     if (client) {
       client.release();
-      console.log('Database connection released');
     }
   }
 }
 
+// Оновлення монет користувача
 export async function updateUserCoins(userId, coinsToAdd) {
+  if (!isDatabaseReady()) {
+    throw new Error('База даних не готова');
+  }
+
   let client;
   try {
     client = await pool.connect();
     await client.query('BEGIN');
+
+    // Перевіряємо чи існує користувач
+    const { rows: user } = await client.query(
+      'SELECT coins FROM users WHERE telegram_id = $1',
+      [userId]
+    );
+
+    if (user.length === 0) {
+      throw new Error('Користувача не знайдено');
+    }
+
+    // Перевіряємо чи не стане баланс від'ємним
+    if (user[0].coins + coinsToAdd < 0) {
+      throw new Error('Недостатньо монет');
+    }
+
+    // Оновлюємо баланс
     const { rows: result } = await client.query(`
       UPDATE users
-      SET coins = coins + $1, total_coins = total_coins + $1
+      SET 
+        coins = coins + $1,
+        total_coins = CASE 
+          WHEN $1 > 0 THEN total_coins + $1
+          ELSE total_coins
+        END,
+        last_active = CURRENT_TIMESTAMP
       WHERE telegram_id = $2
       RETURNING coins, total_coins
     `, [coinsToAdd, userId]);
 
-    if (result.length === 0) {
-      throw new Error('User not found');
-    }
-
     await client.query('COMMIT');
+
     return {
       newCoins: result[0].coins,
       newTotalCoins: result[0].total_coins
     };
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
-    console.error('Error updating user coins:', error);
+    if (client) {
+      await client.query('ROLLBACK');
+    }
     throw error;
   } finally {
     if (client) {
       client.release();
     }
   }
-}
-
-function generateReferralCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
