@@ -168,3 +168,5 @@ app.listen(PORT, async () => {
     console.error('Error connecting to the database:', err);
   }
 });
+
+export default app;
