@@ -48,7 +48,14 @@ async function handleStart(msg) {
     console.log('Повідомлення успішно відправлено:', sentMessage);
 
     try {
-      const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username);
+      const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 }).then(photos => {
+        if (photos.total_count > 0) {
+          return bot.getFileLink(photos.photos[0][0].file_id);
+        }
+        return null;
+      });
+
+      const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username, avatarUrl);
       console.log('Користувач успішно ініціалізований:', userData);
 
       // Обробка реферального коду, якщо він є
@@ -58,7 +65,7 @@ async function handleStart(msg) {
         console.log('Реферальний код оброблено:', referralResult);
 
         if (referralResult.success) {
-          await bot.sendMessage(chatId, `Вітаємо! Ви успішно використали реферальний код та отримали бонус!`);
+          await bot.sendMessage(chatId, `Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`);
         }
       }
     } catch (dbError) {
