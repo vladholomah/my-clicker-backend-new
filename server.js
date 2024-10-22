@@ -9,67 +9,138 @@ import { initializeUser, processReferral, getUserData, updateUserCoins } from '.
 
 dotenv.config();
 
+// Логування конфігурації при запуску
 console.log('Starting server...');
-console.log('Environment variables:');
-console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
-console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'Set' : 'Not set');
-console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-console.log('BOT_USERNAME:', process.env.BOT_USERNAME);
+console.log('Environment variables:', {
+  NODE_ENV: process.env.NODE_ENV,
+  FRONTEND_URL: process.env.FRONTEND_URL,
+  BOT_USERNAME: process.env.BOT_USERNAME
+});
 
 const app = express();
 
-app.set('trust proxy', 1);
+// Базові налаштування безпеки та проксі
+app.set('trust proxy', true);
 app.enable('trust proxy');
 console.log('Trust proxy setting:', app.get('trust proxy'));
 
-app.use(helmet());
-app.use(cors({
-  origin: process.env.FRONTEND_URL,
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+// Helmet для безпеки
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      connectSrc: ["'self'", process.env.FRONTEND_URL],
+      frameSrc: ["'self'", "https://telegram.org"],
+      imgSrc: ["'self'", "https:", "data:", "blob:"],
+    },
+  },
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+// Налаштування CORS
+const corsOptions = {
+  origin: process.env.FRONTEND_URL,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 86400 // 24 години
+};
+app.use(cors(corsOptions));
+
+// Парсери для тіла запиту
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Функція для створення rate limiter з різними налаштуваннями
+const createRateLimiter = (windowMs, max, message) => rateLimit({
+  windowMs,
+  max,
+  message: { error: message },
   standardHeaders: true,
   legacyHeaders: false,
   trustProxy: true,
+  skipSuccessfulRequests: false, // Рахуємо всі запити
   keyGenerator: (req) => {
-    return req.ip;
+    const userId = req.query.userId || req.body.userId;
+    const userIP = req.ip;
+    return userId ? `${userIP}-${userId}` : userIP;
+  },
+  skip: (req) => req.method === 'OPTIONS',
+  handler: (req, res) => {
+    console.log(`Rate limit exceeded for IP: ${req.ip}, userId: ${req.query.userId || req.body.userId}`);
+    res.status(429).json({
+      error: message,
+      retryAfter: Math.ceil(windowMs / 1000)
+    });
   }
 });
 
-app.use(limiter);
+// Глобальний ліміт
+const globalLimiter = createRateLimiter(
+  60 * 1000,    // 1 хвилина
+  100,          // 100 запитів
+  'Занадто багато запитів. Будь ласка, спробуйте пізніше.'
+);
 
-console.log('Rate limiter configuration:', JSON.stringify(limiter.options, null, 2));
+// Ліміт для ініціалізації користувача
+const initUserLimiter = createRateLimiter(
+  60 * 1000,    // 1 хвилина
+  10,           // 10 запитів
+  'Занадто багато спроб ініціалізації. Будь ласка, зачекайте.'
+);
 
-// Logging middleware
+// Ліміт для отримання даних
+const getUserDataLimiter = createRateLimiter(
+  60 * 1000,    // 1 хвилина
+  30,           // 30 запитів
+  'Занадто багато запитів даних. Будь ласка, зачекайте.'
+);
+
+// Ліміт для оновлення монет
+const updateCoinsLimiter = createRateLimiter(
+  60 * 1000,    // 1 хвилина
+  50,           // 50 запитів
+  'Занадто багато оновлень. Будь ласка, зачекайте.'
+);
+
+// Middleware для детального логування
 app.use((req, res, next) => {
+  const startTime = Date.now();
+
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
   console.log('IP:', req.ip);
   console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
-  console.log('Headers:', JSON.stringify(req.headers));
-  console.log('Body:', JSON.stringify(req.body));
+
+  if (req.method !== 'OPTIONS') {
+    console.log('Headers:', JSON.stringify(req.headers));
+    console.log('Body:', JSON.stringify(req.body));
+  }
+
+  // Додаємо логування часу відповіді
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    console.log(`${req.method} ${req.url} completed in ${duration}ms with status ${res.statusCode}`);
+  });
+
   next();
 });
 
-// Test route
+// Застосовуємо глобальний ліміт
+app.use(globalLimiter);
+
+// Тестовий роут
 app.get('/test', (req, res) => {
-  res.send('Server is working!');
+  res.json({ status: 'Server is working!' });
 });
 
-// Webhook route
+// Роут для webhook бота
 app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   console.log('Received update from Telegram:', JSON.stringify(req.body));
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
-app.post('/api/initUser', async (req, res) => {
+// Ініціалізація користувача
+app.post('/api/initUser', initUserLimiter, async (req, res) => {
   const { userId } = req.body;
 
   if (!userId) {
@@ -81,12 +152,22 @@ app.post('/api/initUser', async (req, res) => {
     res.json(userData);
   } catch (error) {
     console.error('Error initializing user:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+
+    if (error.code === '23505') { // Duplicate key error
+      return res.status(409).json({ error: 'User already exists' });
+    }
+
+    res.status(500).json({
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
-app.get('/api/getUserData', async (req, res) => {
+// Отримання даних користувача
+app.get('/api/getUserData', getUserDataLimiter, async (req, res) => {
   const { userId } = req.query;
+
   if (!userId) {
     return res.status(400).json({ error: 'User ID is required' });
   }
@@ -96,12 +177,19 @@ app.get('/api/getUserData', async (req, res) => {
     res.json(userData);
   } catch (error) {
     console.error('Error fetching user data:', error);
+
+    if (error.message === 'User not found') {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.post('/api/updateUserCoins', async (req, res) => {
+// Оновлення монет користувача
+app.post('/api/updateUserCoins', updateCoinsLimiter, async (req, res) => {
   const { userId, coinsToAdd } = req.body;
+
   if (!userId || coinsToAdd === undefined) {
     return res.status(400).json({ error: 'User ID and coins amount are required' });
   }
@@ -115,8 +203,10 @@ app.post('/api/updateUserCoins', async (req, res) => {
   }
 });
 
-app.post('/api/processReferral', async (req, res) => {
+// Обробка реферального коду
+app.post('/api/processReferral', initUserLimiter, async (req, res) => {
   const { referralCode, userId } = req.body;
+
   if (!referralCode || !userId) {
     return res.status(400).json({ error: 'Referral code and user ID are required' });
   }
@@ -126,37 +216,75 @@ app.post('/api/processReferral', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error processing referral:', error);
+
+    if (error.message === 'Invalid referral code') {
+      return res.status(400).json({ error: 'Invalid referral code' });
+    }
+    if (error.message === 'Cannot use own referral code') {
+      return res.status(400).json({ error: 'Cannot use own referral code' });
+    }
+    if (error.message === 'User already referred') {
+      return res.status(400).json({ error: 'User already referred' });
+    }
+
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
+// Тестування підключення до БД
 app.get('/api/test-db', async (req, res) => {
   try {
     const client = await pool.connect();
     const result = await client.query('SELECT NOW()');
     client.release();
-    console.log('Database test query result:', result.rows[0]);
     res.json({ success: true, currentTime: result.rows[0].now });
   } catch (error) {
-    console.error('Database test query error:', error);
+    console.error('Database test error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// Головна сторінка
 app.get('/', (req, res) => {
-  res.send('Holmah Coin Bot Server is running!');
+  res.send('TWASH COIN Bot Server is running!');
 });
 
-// Error handling middleware
+// Middleware для обробки помилок
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
-  res.status(500).send('Something broke!');
+  res.status(500).json({
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
 });
 
+// Обробка необроблених відхилень промісів
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
+// Обробка необроблених помилок
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // В продакшені тут можна додати відправку сповіщень адміністратору
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM signal. Starting graceful shutdown...');
+
+  // Закриваємо з'єднання з базою даних
+  try {
+    await pool.end();
+    console.log('Database connections closed');
+  } catch (err) {
+    console.error('Error closing database connections:', err);
+  }
+
+  process.exit(0);
+});
+
+// Запуск сервера
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
