@@ -59,28 +59,53 @@ async function handlePoolError(error) {
 
   try {
     if (pool) {
+      // Безпечне закриття існуючого пулу
       const oldPool = pool;
       pool = null;
       await oldPool.end().catch(err => console.error('Помилка при закритті старого пулу:', err));
     }
+
+    // Створення нового пулу
     await createPoolWithRetry();
   } catch (err) {
     console.error('Не вдалося відновити пул підключень:', err);
   }
 }
 
+async function getPool() {
+  if (!pool) {
+    await createPoolWithRetry();
+  }
+  return pool;
+}
+
+export async function query(text, params) {
+  const currentPool = await getPool();
+  const client = await currentPool.connect();
+  try {
+    const result = await client.query(text, params);
+    return result;
+  } finally {
+    client.release();
+  }
+}
+
+export async function testConnection() {
+  try {
+    const result = await query('SELECT NOW()');
+    console.log('Тест підключення до бази даних успішний:', result.rows[0]);
+    return true;
+  } catch (err) {
+    console.error('Помилка при тестуванні підключення до бази даних:', err);
+    return false;
+  }
+}
+
 export async function initializeDatabase() {
-  let client;
   try {
     console.log('Початок ініціалізації бази даних...');
-    client = await pool.connect();
-
-    // Видаляємо стару таблицю, якщо вона існує
-    await client.query('DROP TABLE IF EXISTS users');
-
-    // Створюємо нову таблицю з правильною структурою
-    await client.query(`
-      CREATE TABLE users (
+    const result = await query(`
+      CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
         first_name VARCHAR(255),
         last_name VARCHAR(255),
@@ -99,36 +124,21 @@ export async function initializeDatabase() {
     `);
 
     // Створення індексів
-    await client.query(`
-      CREATE INDEX idx_referral_code ON users(referral_code);
-      CREATE INDEX idx_coins ON users(coins);
-      CREATE INDEX idx_total_coins ON users(total_coins);
-      CREATE INDEX idx_created_at ON users(created_at);
-      CREATE INDEX idx_last_active ON users(last_active);
-    `);
+    await query('CREATE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code)');
+    await query('CREATE INDEX IF NOT EXISTS idx_coins ON users(coins)');
+    await query('CREATE INDEX IF NOT EXISTS idx_total_coins ON users(total_coins)');
 
     console.log('База даних успішно ініціалізована');
-    return true;
+    return result;
   } catch (err) {
     console.error('Помилка при ініціалізації бази даних:', err);
     throw err;
-  } finally {
-    if (client) {
-      client.release();
-    }
   }
 }
 
-async function query(text, params) {
-  const client = await pool.connect();
-  try {
-    return await client.query(text, params);
-  } finally {
-    client.release();
-  }
+export function isDatabaseReady() {
+  return dbReady && pool !== null;
 }
-
-export { pool, query, dbReady };
 
 // Ініціалізація бази даних при імпорті модуля
 createPoolWithRetry().catch(err => {
@@ -142,3 +152,5 @@ process.on('exit', async () => {
     await pool.end().catch(console.error);
   }
 });
+
+export { pool };
