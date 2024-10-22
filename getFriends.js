@@ -1,4 +1,4 @@
-import { pool } from './db.js';
+import { query, isDatabaseReady } from './db.js';
 
 export default async (req, res) => {
   console.log('Отримано запит на отримання друзів:', req.method, req.url);
@@ -11,12 +11,20 @@ export default async (req, res) => {
     return res.status(400).json({ success: false, error: 'Потрібен userId' });
   }
 
-  let client;
   try {
-    client = await pool.connect();
+    if (!isDatabaseReady()) {
+      console.log('База даних не готова, очікування...');
+      return res.status(503).json({
+        success: false,
+        error: 'Сервер ініціалізується, спробуйте пізніше'
+      });
+    }
 
     // Отримуємо дані користувача
-    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+    const { rows: user } = await query(
+      'SELECT * FROM users WHERE telegram_id = $1',
+      [userId]
+    );
 
     if (user.length === 0) {
       console.error('Користувача не знайдено');
@@ -26,8 +34,18 @@ export default async (req, res) => {
     console.log('Користувач знайдений:', user[0]);
 
     // Отримуємо дані друзів (рефералів) користувача
-    const { rows: friends } = await client.query(`
-      SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
+    const { rows: friends } = await query(`
+      SELECT 
+        telegram_id, 
+        first_name, 
+        last_name, 
+        username, 
+        coins, 
+        total_coins, 
+        level, 
+        avatar,
+        created_at,
+        last_active
       FROM users 
       WHERE telegram_id = ANY($1)
     `, [user[0].referrals]);
@@ -42,7 +60,9 @@ export default async (req, res) => {
       coins: friend.coins,
       totalCoins: friend.total_coins,
       level: friend.level,
-      avatar: friend.avatar
+      avatar: friend.avatar,
+      createdAt: friend.created_at,
+      lastActive: friend.last_active
     }));
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
@@ -60,8 +80,10 @@ export default async (req, res) => {
     console.log('Успішно відправлено дані про друзів');
   } catch (error) {
     console.error('Помилка при отриманні даних друзів:', error);
-    res.status(500).json({ success: false, error: 'Внутрішня помилка сервера', details: error.message });
-  } finally {
-    if (client) client.release();
+    res.status(500).json({
+      success: false,
+      error: 'Внутрішня помилка сервера',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 }
