@@ -8,7 +8,7 @@ const poolConfig = {
   ssl: {
     rejectUnauthorized: false
   },
-  max: 10, // Зменшуємо максимальну кількість з'єднань
+  max: 5, // Зменшуємо максимальну кількість з'єднань
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000, // Збільшуємо таймаут підключення
   keepAlive: true
