@@ -42,36 +42,35 @@ async function handleStart(msg) {
     console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
     console.log('Keyboard:', JSON.stringify(keyboard));
 
-    // Спочатку відправляємо повідомлення про обробку запиту
-    await bot.sendMessage(chatId, 'Обробка вашого запиту...');
-
-    // Отримуємо аватар користувача
-    const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 }).then(photos => {
-      if (photos.total_count > 0) {
-        return bot.getFileLink(photos.photos[0][0].file_id);
-      }
-      return null;
-    });
-
-    // Ініціалізуємо користувача
-    const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username, avatarUrl);
-    console.log('Користувач успішно ініціалізований:', userData);
-
-    // Відправляємо основне повідомлення з кнопкою
     const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
       reply_markup: keyboard
     });
     console.log('Повідомлення успішно відправлено:', sentMessage);
 
-    // Обробка реферального коду, якщо він є
-    const startParam = msg.text.split(' ')[1];
-    if (startParam) {
-      const referralResult = await processReferral(startParam, userId);
-      console.log('Реферальний код оброблено:', referralResult);
+    try {
+      const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 }).then(photos => {
+        if (photos.total_count > 0) {
+          return bot.getFileLink(photos.photos[0][0].file_id);
+        }
+        return null;
+      });
 
-      if (referralResult.success) {
-        await bot.sendMessage(chatId, `Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`);
+      const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username, avatarUrl);
+      console.log('Користувач успішно ініціалізований:', userData);
+
+      // Обробка реферального коду, якщо він є
+      const startParam = msg.text.split(' ')[1];
+      if (startParam) {
+        const referralResult = await processReferral(startParam, userId);
+        console.log('Реферальний код оброблено:', referralResult);
+
+        if (referralResult.success) {
+          await bot.sendMessage(chatId, `Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`);
+        }
       }
+    } catch (dbError) {
+      console.error('Помилка при ініціалізації користувача або обробці реферального коду:', dbError);
+      await bot.sendMessage(chatId, 'Виникла помилка при обробці вашого запиту. Будь ласка, спробуйте ще раз пізніше.');
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);

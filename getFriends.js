@@ -64,4 +64,4 @@ export default async (req, res) => {
   } finally {
     if (client) client.release();
   }
-};
+}
