@@ -17,6 +17,54 @@ console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'Встановлено' : 'Н
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
 console.log('BOT_USERNAME:', process.env.BOT_USERNAME);
 
+// Функція для warm-up сервера
+async function warmupServer() {
+  try {
+    console.log('Початок warm-up серверу...');
+
+    // Чекаємо на ініціалізацію бази даних
+    await new Promise((resolve) => {
+      const checkDb = async () => {
+        if (isDatabaseReady()) {
+          console.log('База даних готова');
+          resolve();
+        } else {
+          console.log('Очікування готовності бази даних...');
+          setTimeout(checkDb, 100);
+        }
+      };
+      checkDb();
+    });
+
+    // Перевіряємо з'єднання з базою даних
+    const dbConnection = await testConnection();
+    if (!dbConnection) {
+      throw new Error('Не вдалося встановити з\'єднання з базою даних');
+    }
+
+    // Чекаємо на готовність бота
+    await new Promise((resolve) => {
+      const checkBot = async () => {
+        try {
+          const botInfo = await bot.getMe();
+          console.log('Бот готовий:', botInfo.username);
+          resolve();
+        } catch (error) {
+          console.log('Очікування готовності бота...');
+          setTimeout(checkBot, 100);
+        }
+      };
+      checkBot();
+    });
+
+    console.log('Warm-up завершено успішно');
+    return true;
+  } catch (error) {
+    console.error('Помилка при warm-up:', error);
+    return false;
+  }
+}
+
 const app = express();
 
 // Налаштування довіри до проксі
@@ -47,14 +95,13 @@ app.use(cors({
   credentials: true
 }));
 
-// Парсери для тіла запиту
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Налаштування rate limiter
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 хвилин
-  max: 100, // максимум 100 запитів за вікно
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   trustProxy: true,
@@ -87,31 +134,30 @@ app.use((req, res, next) => {
 // Перевірка здоров'я сервера
 app.get('/health', async (req, res) => {
   const dbStatus = isDatabaseReady();
+  const botStatus = await bot.getMe().catch(() => null);
+
   res.json({
-    status: 'ok',
+    status: dbStatus && botStatus ? 'ok' : 'initializing',
     timestamp: new Date().toISOString(),
     database: dbStatus ? 'connected' : 'disconnected',
+    bot: botStatus ? 'ready' : 'initializing',
     environment: process.env.NODE_ENV
   });
 });
 
-// Тестовий маршрут
-app.get('/test', (req, res) => {
-  res.send('Сервер працює!');
-});
-
-// Webhook для бота
+// Webhook для бота з підтримкою warm-up
 app.post(`/bot${process.env.BOT_TOKEN}`, async (req, res) => {
   try {
     console.log('Webhook: отримано оновлення від Telegram');
     console.log('Тіло запиту:', JSON.stringify(req.body));
 
     if (!isDatabaseReady()) {
-      console.log('База даних не готова, очікування...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      if (!isDatabaseReady()) {
-        throw new Error('База даних недоступна');
-      }
+      console.log('Сервер ще не готовий, виконується warm-up...');
+      await warmupServer();
+    }
+
+    if (!isDatabaseReady()) {
+      throw new Error('Сервер не готовий після warm-up');
     }
 
     await bot.processUpdate(req.body);
@@ -119,17 +165,21 @@ app.post(`/bot${process.env.BOT_TOKEN}`, async (req, res) => {
     res.sendStatus(200);
   } catch (error) {
     console.error('Помилка обробки webhook:', error);
-    res.status(500).json({
-      error: 'Внутрішня помилка сервера',
+    // Відправляємо 503 замість 500, щоб Telegram повторив запит
+    res.status(503).json({
+      error: 'Сервер готується до роботи, спробуйте за мить',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
-// API ендпоінти
+// API ендпоінти з перевіркою готовності
 app.post('/api/initUser', async (req, res) => {
-  const { userId } = req.body;
+  if (!isDatabaseReady()) {
+    return res.status(503).json({ error: 'Сервер ініціалізується' });
+  }
 
+  const { userId } = req.body;
   if (!userId) {
     return res.status(400).json({ error: 'Потрібен userId' });
   }
@@ -147,8 +197,11 @@ app.post('/api/initUser', async (req, res) => {
 });
 
 app.get('/api/getUserData', async (req, res) => {
-  const { userId } = req.query;
+  if (!isDatabaseReady()) {
+    return res.status(503).json({ error: 'Сервер ініціалізується' });
+  }
 
+  const { userId } = req.query;
   if (!userId) {
     return res.status(400).json({ error: 'Потрібен userId' });
   }
@@ -166,8 +219,11 @@ app.get('/api/getUserData', async (req, res) => {
 });
 
 app.post('/api/updateUserCoins', async (req, res) => {
-  const { userId, coinsToAdd } = req.body;
+  if (!isDatabaseReady()) {
+    return res.status(503).json({ error: 'Сервер ініціалізується' });
+  }
 
+  const { userId, coinsToAdd } = req.body;
   if (!userId || coinsToAdd === undefined) {
     return res.status(400).json({ error: 'Потрібні userId та coinsToAdd' });
   }
@@ -185,8 +241,11 @@ app.post('/api/updateUserCoins', async (req, res) => {
 });
 
 app.post('/api/processReferral', async (req, res) => {
-  const { referralCode, userId } = req.body;
+  if (!isDatabaseReady()) {
+    return res.status(503).json({ error: 'Сервер ініціалізується' });
+  }
 
+  const { referralCode, userId } = req.body;
   if (!referralCode || !userId) {
     return res.status(400).json({ error: 'Потрібні referralCode та userId' });
   }
@@ -199,23 +258,6 @@ app.post('/api/processReferral', async (req, res) => {
     res.status(500).json({
       error: 'Внутрішня помилка сервера',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// Тест бази даних
-app.get('/api/test-db', async (req, res) => {
-  try {
-    const result = await testConnection();
-    res.json({
-      success: result,
-      status: isDatabaseReady() ? 'ready' : 'not ready'
-    });
-  } catch (error) {
-    console.error('Помилка тесту бази даних:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
     });
   }
 });
@@ -239,7 +281,7 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Необроблена відмова промісу:', promise, 'причина:', reason);
 });
 
-// Запуск сервера
+// Запуск сервера з warm-up
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
   console.log(`Сервер запущено на порту ${PORT}`);
@@ -248,9 +290,12 @@ app.listen(PORT, async () => {
     await initializeDatabase();
     console.log('База даних успішно ініціалізована');
 
-    const dbTest = await testConnection();
-    if (dbTest) {
-      console.log('Підключення до бази даних працює');
+    // Виконуємо warm-up при старті
+    const warmupResult = await warmupServer();
+    if (warmupResult) {
+      console.log('Сервер повністю готовий до роботи');
+    } else {
+      console.log('Сервер запущено, але деякі компоненти можуть бути не готові');
     }
   } catch (err) {
     console.error('Помилка при ініціалізації:', err);
