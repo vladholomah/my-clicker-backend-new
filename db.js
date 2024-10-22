@@ -3,108 +3,47 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-let pool = null;
-let dbReady = false;
-let connectionAttempts = 0;
-const MAX_CONNECTION_ATTEMPTS = 5;
+export const pool = createPool({
+  connectionString: process.env.POSTGRES_URL,
+  ssl: {
+    rejectUnauthorized: false
+  },
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+  keepAlive: true
+});
 
-async function createPoolWithRetry() {
-  try {
-    pool = createPool({
-      connectionString: process.env.POSTGRES_URL,
-      ssl: {
-        rejectUnauthorized: false
-      },
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 10000
-    });
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+});
 
-    // Перевірка з'єднання
-    const client = await pool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
-
-    console.log('Успішне підключення до бази даних');
-    dbReady = true;
-    connectionAttempts = 0;
-
-    // Встановлюємо обробники подій
-    pool.on('error', handlePoolError);
-    pool.on('connect', () => {
-      console.log('Нове підключення до бази даних встановлено');
-      dbReady = true;
-    });
-
-    return pool;
-  } catch (error) {
-    console.error('Помилка при створенні пулу:', error);
-    connectionAttempts++;
-
-    if (connectionAttempts < MAX_CONNECTION_ATTEMPTS) {
-      console.log(`Спроба підключення ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}`);
-      await new Promise(resolve => setTimeout(resolve, 1000 * connectionAttempts));
-      return createPoolWithRetry();
-    }
-
-    throw error;
-  }
-}
-
-async function handlePoolError(error) {
-  console.error('Помилка пулу підключень:', error);
-  dbReady = false;
-
-  try {
-    if (pool) {
-      // Безпечне закриття існуючого пулу
-      const oldPool = pool;
-      pool = null;
-      await oldPool.end().catch(err => console.error('Помилка при закритті старого пулу:', err));
-    }
-
-    // Створення нового пулу
-    await createPoolWithRetry();
-  } catch (err) {
-    console.error('Не вдалося відновити пул підключень:', err);
-  }
-}
-
-async function getPool() {
-  if (!pool) {
-    await createPoolWithRetry();
-  }
-  return pool;
-}
-
-export async function query(text, params) {
-  const currentPool = await getPool();
-  const client = await currentPool.connect();
-  try {
-    const result = await client.query(text, params);
-    return result;
-  } finally {
-    client.release();
-  }
-}
+pool.on('connect', () => {
+  console.log('Connected to the database');
+});
 
 export async function testConnection() {
+  let client;
   try {
-    const result = await query('SELECT NOW()');
-    console.log('Тест підключення до бази даних успішний:', result.rows[0]);
+    client = await pool.connect();
+    const result = await client.query('SELECT NOW()');
+    console.log('Database connection test successful:', result.rows[0]);
     return true;
   } catch (err) {
-    console.error('Помилка при тестуванні підключення до бази даних:', err);
+    console.error('Error testing database connection:', err);
     return false;
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 }
 
 export async function initializeDatabase() {
+  let client;
   try {
-    console.log('Початок ініціалізації бази даних...');
-    const result = await query(`
+    client = await pool.connect();
+    await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
         first_name VARCHAR(255),
@@ -114,43 +53,24 @@ export async function initializeDatabase() {
         coins INTEGER DEFAULT 0,
         total_coins INTEGER DEFAULT 0,
         level VARCHAR(50) DEFAULT 'Новачок',
-        referrals BIGINT[] DEFAULT ARRAY[]::BIGINT[],
+        referrals BIGINT[],
         referred_by BIGINT,
-        avatar VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        settings JSONB DEFAULT '{}'::JSONB
+        avatar VARCHAR(255)
       )
     `);
-
-    // Створення індексів
-    await query('CREATE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code)');
-    await query('CREATE INDEX IF NOT EXISTS idx_coins ON users(coins)');
-    await query('CREATE INDEX IF NOT EXISTS idx_total_coins ON users(total_coins)');
-
-    console.log('База даних успішно ініціалізована');
-    return result;
+    console.log('Database initialized successfully');
   } catch (err) {
-    console.error('Помилка при ініціалізації бази даних:', err);
-    throw err;
+    console.error('Error initializing database:', err);
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 }
 
-export function isDatabaseReady() {
-  return dbReady && pool !== null;
-}
-
-// Ініціалізація бази даних при імпорті модуля
-createPoolWithRetry().catch(err => {
-  console.error('Помилка при початковій ініціалізації бази даних:', err);
-});
-
-// Обробка завершення роботи
 process.on('exit', async () => {
-  console.log('Закриття пулу підключень до бази даних...');
-  if (pool) {
-    await pool.end().catch(console.error);
-  }
+  console.log('Closing database pool...');
+  await pool.end();
 });
 
-export { pool };
+export default pool;
