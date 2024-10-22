@@ -5,7 +5,7 @@ dotenv.config();
 
 let pool;
 
-export function getPool() {
+function getPool() {
     if (!pool) {
         pool = createPool({
             connectionString: process.env.POSTGRES_URL,
@@ -32,7 +32,7 @@ export function getPool() {
 }
 
 // Функція для отримання з'єднання з повторними спробами
-export async function getConnection(retries = 3, delay = 1000) {
+async function getConnection(retries = 3, delay = 1000) {
     let lastError;
 
     for (let i = 0; i < retries; i++) {
@@ -51,7 +51,7 @@ export async function getConnection(retries = 3, delay = 1000) {
 }
 
 // Функція для виконання запиту з повторними спробами
-export async function executeQuery(query, params = [], retries = 3) {
+async function executeQuery(query, params = [], retries = 3) {
     let client;
     try {
         client = await getConnection(retries);
@@ -68,7 +68,7 @@ export async function executeQuery(query, params = [], retries = 3) {
     }
 }
 
-export async function testConnection() {
+async function testConnection() {
     try {
         const result = await executeQuery('SELECT NOW()');
         console.log('Database connection test successful:', result.rows[0]);
@@ -79,7 +79,7 @@ export async function testConnection() {
     }
 }
 
-export async function initializeDatabase() {
+async function initializeDatabase() {
     try {
         await executeQuery(`
             CREATE TABLE IF NOT EXISTS users (
@@ -105,7 +105,7 @@ export async function initializeDatabase() {
 }
 
 // Функція для коректного закриття пулу
-export async function closePool() {
+async function closePool() {
     if (pool) {
         try {
             await pool.end();
@@ -128,7 +128,7 @@ process.once('SIGINT', async () => {
     await closePool();
 });
 
-// Експортуємо всі необхідні функції
+// Експортуємо всі функції одним блоком
 export {
     getPool,
     getConnection,
