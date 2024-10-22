@@ -58,6 +58,40 @@ export async function initializeUser(userId, firstName, lastName, username, avat
   }
 }
 
+export async function updateUserLevel(userId, coins) {
+  let client;
+  try {
+    client = await pool.connect();
+    console.log('Updating user level for userId:', userId, 'coins:', coins);
+
+    // Визначаємо рівень на основі кількості монет
+    let newLevel = 'Новачок';
+    if (coins >= 2000000) newLevel = 'Legendary';
+    else if (coins >= 1000000) newLevel = 'Epic';
+    else if (coins >= 100000) newLevel = 'Diamond';
+    else if (coins >= 25000) newLevel = 'Platinum';
+    else if (coins >= 5000) newLevel = 'Gold';
+    else if (coins > 0) newLevel = 'Silver';
+
+    // Оновлюємо рівень в базі даних
+    const { rows } = await client.query(
+      'UPDATE users SET level = $1 WHERE telegram_id = $2 RETURNING *',
+      [newLevel, userId]
+    );
+
+    console.log('User level updated successfully:', newLevel);
+    return rows[0];
+  } catch (error) {
+    console.error('Error updating user level:', error);
+    throw error;
+  } finally {
+    if (client) {
+      client.release();
+      console.log('Database connection released after level update');
+    }
+  }
+}
+
 export async function processReferral(referralCode, userId) {
   let client;
   try {
@@ -83,9 +117,16 @@ export async function processReferral(referralCode, userId) {
     await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
     await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
 
-    const bonusCoins = 1000; // Збільшено бонус до 1000 монет
+    const bonusCoins = 1000;
     await client.query('UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
       [bonusCoins, referrer[0].telegram_id, userId]);
+
+    // Оновлюємо рівні обох користувачів після нарахування бонусів
+    const { rows: updatedReferrer } = await client.query('SELECT coins FROM users WHERE telegram_id = $1', [referrer[0].telegram_id]);
+    const { rows: updatedUser } = await client.query('SELECT coins FROM users WHERE telegram_id = $1', [userId]);
+
+    await updateUserLevel(referrer[0].telegram_id, updatedReferrer[0].coins);
+    await updateUserLevel(userId, updatedUser[0].coins);
 
     await client.query('COMMIT');
     console.log('Referral processed successfully');
@@ -155,6 +196,8 @@ export async function updateUserCoins(userId, coinsToAdd) {
   try {
     client = await pool.connect();
     await client.query('BEGIN');
+
+    // Оновлюємо монети
     const { rows: result } = await client.query(`
       UPDATE users
       SET coins = coins + $1, total_coins = total_coins + $1
@@ -166,7 +209,11 @@ export async function updateUserCoins(userId, coinsToAdd) {
       throw new Error('User not found');
     }
 
+    // Оновлюємо рівень користувача
+    await updateUserLevel(userId, result[0].coins);
+
     await client.query('COMMIT');
+    console.log('Coins and level updated successfully');
     return {
       newCoins: result[0].coins,
       newTotalCoins: result[0].total_coins
