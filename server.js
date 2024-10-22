@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { pool } from './db.js';
+import { pool, initializeDatabase, testConnection } from './db.js';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -9,67 +9,75 @@ import { initializeUser, processReferral, getUserData, updateUserCoins } from '.
 
 dotenv.config();
 
-console.log('Starting server...');
-console.log('Environment variables:');
-console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
-console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'Set' : 'Not set');
-console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-console.log('BOT_USERNAME:', process.env.BOT_USERNAME);
-
-const app = express();
-
-app.set('trust proxy', 1);
-app.enable('trust proxy');
-console.log('Trust proxy setting:', app.get('trust proxy'));
-
-app.use(helmet());
-app.use(cors({
-  origin: process.env.FRONTEND_URL,
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
+// Налаштування rate limiter
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+  windowMs: 1 * 60 * 1000, // 1 хвилина
+  max: 60, // максимум 60 запитів за хвилину
+  message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
   trustProxy: true,
   keyGenerator: (req) => {
-    return req.ip;
+    return req.ip || req.headers['x-forwarded-for'];
+  },
+  skip: (req) => {
+    // Пропускаємо обмеження для webhook від Telegram
+    return req.url.includes(`/bot${process.env.BOT_TOKEN}`);
   }
 });
 
+const app = express();
+
+// Базові налаштування безпеки
+app.set('trust proxy', 1);
+app.enable('trust proxy');
+app.use(helmet());
+
+// Налаштування CORS
+app.use(cors({
+  origin: process.env.FRONTEND_URL,
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(limiter);
 
-console.log('Rate limiter configuration:', JSON.stringify(limiter.options, null, 2));
-
-// Logging middleware
+// Middleware для логування
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-  console.log('IP:', req.ip);
-  console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
-  console.log('Headers:', JSON.stringify(req.headers));
-  console.log('Body:', JSON.stringify(req.body));
+  const start = Date.now();
+  const requestId = Math.random().toString(36).substring(7);
+
+  console.log(`[${requestId}] ${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log(`[${requestId}] Headers:`, JSON.stringify(req.headers));
+  console.log(`[${requestId}] Body:`, JSON.stringify(req.body));
+
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[${requestId}] Request completed in ${duration}ms with status ${res.statusCode}`);
+  });
+
   next();
 });
 
-// Test route
-app.get('/test', (req, res) => {
-  res.send('Server is working!');
-});
+// Middleware для перевірки з'єднання з базою даних
+const checkDbConnection = async (req, res, next) => {
+  try {
+    const isConnected = await testConnection();
+    if (!isConnected) {
+      throw new Error('Database connection failed');
+    }
+    next();
+  } catch (error) {
+    console.error('Database connection error:', error);
+    res.status(503).json({ error: 'Database service unavailable' });
+  }
+};
 
-// Webhook route
-app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
-  console.log('Received update from Telegram:', JSON.stringify(req.body));
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
-});
-
-app.post('/api/initUser', async (req, res) => {
+// Маршрути API
+app.post('/api/initUser', checkDbConnection, async (req, res) => {
   const { userId } = req.body;
 
   if (!userId) {
@@ -81,12 +89,16 @@ app.post('/api/initUser', async (req, res) => {
     res.json(userData);
   } catch (error) {
     console.error('Error initializing user:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
-app.get('/api/getUserData', async (req, res) => {
+app.get('/api/getUserData', checkDbConnection, async (req, res) => {
   const { userId } = req.query;
+
   if (!userId) {
     return res.status(400).json({ error: 'User ID is required' });
   }
@@ -96,12 +108,16 @@ app.get('/api/getUserData', async (req, res) => {
     res.json(userData);
   } catch (error) {
     console.error('Error fetching user data:', error);
+    if (error.message === 'User not found') {
+      return res.status(404).json({ error: 'User not found' });
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.post('/api/updateUserCoins', async (req, res) => {
+app.post('/api/updateUserCoins', checkDbConnection, async (req, res) => {
   const { userId, coinsToAdd } = req.body;
+
   if (!userId || coinsToAdd === undefined) {
     return res.status(400).json({ error: 'User ID and coins amount are required' });
   }
@@ -111,12 +127,16 @@ app.post('/api/updateUserCoins', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error updating user coins:', error);
+    if (error.message === 'User not found') {
+      return res.status(404).json({ error: 'User not found' });
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.post('/api/processReferral', async (req, res) => {
+app.post('/api/processReferral', checkDbConnection, async (req, res) => {
   const { referralCode, userId } = req.body;
+
   if (!referralCode || !userId) {
     return res.status(400).json({ error: 'Referral code and user ID are required' });
   }
@@ -126,47 +146,85 @@ app.post('/api/processReferral', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error processing referral:', error);
+    if (error.message === 'User already referred') {
+      return res.status(409).json({ error: 'User already referred' });
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.get('/api/test-db', async (req, res) => {
+// Webhook route для Telegram
+app.post(`/bot${process.env.BOT_TOKEN}`, async (req, res) => {
   try {
-    const client = await pool.connect();
-    const result = await client.query('SELECT NOW()');
-    client.release();
-    console.log('Database test query result:', result.rows[0]);
-    res.json({ success: true, currentTime: result.rows[0].now });
+    console.log('Received update from Telegram:', JSON.stringify(req.body));
+    await bot.processUpdate(req.body);
+    res.sendStatus(200);
   } catch (error) {
-    console.error('Database test query error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error processing Telegram update:', error);
+    res.sendStatus(500);
   }
 });
 
-app.get('/', (req, res) => {
-  res.send('Holmah Coin Bot Server is running!');
+// Базовий маршрут для перевірки роботи сервера
+app.get('/', async (req, res) => {
+  try {
+    const dbStatus = await testConnection();
+    res.json({
+      status: 'Server is running',
+      database: dbStatus ? 'connected' : 'disconnected',
+      environment: process.env.NODE_ENV
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'Server is running',
+      database: 'error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
 });
 
-// Error handling middleware
+// Обробка помилок
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err.stack);
-  res.status(500).send('Something broke!');
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+    error: 'Internal server error',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
 });
 
+// Обробка необроблених відхилень промісів
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
-  console.log(`Server is running on port ${PORT}`);
-  try {
-    const client = await pool.connect();
-    console.log('Successfully connected to the database');
-    client.release();
-  } catch (err) {
-    console.error('Error connecting to the database:', err);
-  }
+// Обробка необроблених помилок
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Даємо час на логування перед виходом
+  setTimeout(() => {
+    process.exit(1);
+  }, 1000);
 });
+
+// Ініціалізація сервера
+const PORT = process.env.PORT || 3001;
+
+async function startServer() {
+  try {
+    // Ініціалізація бази даних
+    await initializeDatabase();
+    console.log('Database initialized successfully');
+
+    // Запуск сервера
+    app.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Error starting server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 export default app;
