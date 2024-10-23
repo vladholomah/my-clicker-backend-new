@@ -1,11 +1,13 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 import { initializeUser, processReferral, getUserData } from './userManagement.js';
+import pkg from '@vercel/postgres';
+const { sql } = pkg;
 
 dotenv.config();
 
 // Перевірка наявності необхідних змінних середовища
-const requiredEnvVars = ['BOT_TOKEN', 'FRONTEND_URL', 'BOT_USERNAME'];
+const requiredEnvVars = ['BOT_TOKEN', 'FRONTEND_URL', 'BOT_USERNAME', 'POSTGRES_URL'];
 requiredEnvVars.forEach(varName => {
   if (!process.env[varName]) {
     console.error(`Missing required environment variable: ${varName}`);
@@ -17,11 +19,32 @@ console.log('FRONTEND_URL при запуску:', process.env.FRONTEND_URL);
 console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
 console.log('BOT_TOKEN (перші 10 символів):', process.env.BOT_TOKEN.substring(0, 10) + '...');
 
+// Додаємо обробку uncaughtException
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+// Додаємо обробку unhandledRejection
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 const bot = new TelegramBot(process.env.BOT_TOKEN, {
   webHook: {
     port: process.env.PORT
   }
 });
+
+// Функція для перевірки з'єднання з базою даних
+async function checkDatabaseConnection() {
+  try {
+    await sql`SELECT 1`;
+    return true;
+  } catch (error) {
+    console.error('Database connection error:', error);
+    return false;
+  }
+}
 
 // Обробка текстових повідомлень
 bot.on('text', async (msg) => {
@@ -54,6 +77,12 @@ bot.on('callback_query', async (query) => {
 
     if (query.data === 'invite_friends') {
       try {
+        // Перевіряємо з'єднання з базою даних
+        const isConnected = await checkDatabaseConnection();
+        if (!isConnected) {
+          throw new Error('Database connection failed');
+        }
+
         const userData = await getUserData(userId);
         if (!userData) {
           throw new Error('User data not found');
@@ -87,6 +116,12 @@ async function handleStart(msg) {
   const userId = msg.from.id;
 
   try {
+    // Перевіряємо з'єднання з базою даних
+    const isConnected = await checkDatabaseConnection();
+    if (!isConnected) {
+      throw new Error('Database connection failed');
+    }
+
     // Створюємо клавіатуру з веб-додатком
     const keyboard = {
       inline_keyboard: [
@@ -109,16 +144,18 @@ async function handleStart(msg) {
     let avatarUrl = null;
     try {
       const photos = await bot.getUserProfilePhotos(userId, { limit: 1 });
-      if (photos.total_count > 0) {
+      if (photos && photos.total_count > 0) {
         avatarUrl = await bot.getFileLink(photos.photos[0][0].file_id);
       }
     } catch (photoError) {
       console.error('Помилка при отриманні фото профілю:', photoError);
+      // Продовжуємо без фото
     }
 
     // Ініціалізуємо користувача
+    let userData;
     try {
-      const userData = await initializeUser(
+      userData = await initializeUser(
         userId,
         msg.from.first_name,
         msg.from.last_name,
@@ -139,6 +176,9 @@ async function handleStart(msg) {
               chatId,
               `🎉 Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`
             );
+
+            // Оновлюємо дані користувача після реферального бонусу
+            userData = await getUserData(userId);
           }
         } catch (refError) {
           console.error('Помилка при обробці реферального коду:', refError);
@@ -168,10 +208,11 @@ async function handleStart(msg) {
 
     } catch (dbError) {
       console.error('Помилка при ініціалізації користувача:', dbError);
-      await bot.sendMessage(
-        chatId,
-        'Виникла помилка при обробці вашого запиту. Будь ласка, спробуйте ще раз пізніше.'
-      );
+
+      // Відправляємо повідомлення навіть якщо є помилка з БД
+      await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
+        reply_markup: keyboard
+      });
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
