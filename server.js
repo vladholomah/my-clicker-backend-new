@@ -229,4 +229,18 @@ app.listen(PORT, async () => {
   }
 });
 
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received');
+  try {
+    await new Promise((resolve) => server.close(resolve));
+    console.log('Server closed');
+    await pool.end();
+    console.log('Database pool closed');
+  } catch (err) {
+    console.error('Error during shutdown:', err);
+  } finally {
+    process.exit(0);
+  }
+});
+
 export default app;

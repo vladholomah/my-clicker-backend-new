@@ -1,5 +1,3 @@
-// db.js
-
 import { createPool } from '@vercel/postgres';
 import dotenv from 'dotenv';
 
@@ -10,10 +8,10 @@ export const pool = createPool({
   ssl: {
     rejectUnauthorized: false
   },
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-  keepAlive: true
+  max: 1, // Зменшуємо максимальну кількість з'єднань
+  idleTimeoutMillis: 15000, // Зменшуємо час очікування
+  connectionTimeoutMillis: 5000,
+  keepAlive: false // Вимикаємо keepAlive
 });
 
 pool.on('error', (err) => {
@@ -45,25 +43,6 @@ export async function initializeDatabase() {
   let client;
   try {
     client = await pool.connect();
-
-    // Перевіряємо чи існує колонка referral_rewards_claimed
-    const { rows } = await client.query(`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'users' 
-      AND column_name = 'referral_rewards_claimed'
-    `);
-
-    // Якщо колонка не існує, додаємо її
-    if (rows.length === 0) {
-      await client.query(`
-        ALTER TABLE users 
-        ADD COLUMN IF NOT EXISTS referral_rewards_claimed BIGINT[] DEFAULT ARRAY[]::BIGINT[]
-      `);
-      console.log('Added referral_rewards_claimed column to users table');
-    }
-
-    // Створюємо таблицю, якщо вона не існує
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
@@ -83,7 +62,6 @@ export async function initializeDatabase() {
     console.log('Database initialized successfully');
   } catch (err) {
     console.error('Error initializing database:', err);
-    throw err;
   } finally {
     if (client) {
       client.release();
@@ -91,9 +69,28 @@ export async function initializeDatabase() {
   }
 }
 
-process.on('exit', async () => {
-  console.log('Closing database pool...');
-  await pool.end();
+// Видаляємо обробник process.on('exit')
+// Замість цього додаємо обробник для graceful shutdown
+process.on('SIGTERM', async () => {
+  try {
+    await pool.end();
+    console.log('Pool has ended');
+  } catch (err) {
+    console.error('Error during pool shutdown:', err);
+  } finally {
+    process.exit(0);
+  }
+});
+
+process.on('SIGINT', async () => {
+  try {
+    await pool.end();
+    console.log('Pool has ended');
+  } catch (err) {
+    console.error('Error during pool shutdown:', err);
+  } finally {
+    process.exit(0);
+  }
 });
 
 export default pool;

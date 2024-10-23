@@ -42,6 +42,25 @@ bot.on('polling_error', (error) => {
   console.error('Помилка при опитуванні Telegram API:', error);
 });
 
+bot.on('error', (error) => {
+  console.error('Telegram bot error:', error);
+});
+
+bot.on('webhook_error', (error) => {
+  console.error('Webhook error:', error);
+});
+
+// Додаємо graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received');
+  try {
+    await bot.close();
+    console.log('Bot connection closed');
+  } catch (err) {
+    console.error('Error during bot shutdown:', err);
+  }
+});
+
 async function handleStart(msg) {
   console.log('Початок обробки команди /start');
   const chatId = msg.chat.id;
