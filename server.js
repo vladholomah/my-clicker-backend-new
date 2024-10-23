@@ -5,7 +5,14 @@ import { pool } from './db.js';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import { initializeUser, processReferral, getUserData, updateUserCoins, updateUserLevel } from './userManagement.js';
+import {
+  initializeUser,
+  processReferral,
+  getUserData,
+  updateUserCoins,
+  updateUserLevel,
+  claimReferralReward
+} from './userManagement.js';
 
 dotenv.config();
 
@@ -57,7 +64,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Додаємо новий маршрут для оновлення рівня користувача
 app.post('/api/updateUserLevel', async (req, res) => {
   const { userId, newLevel } = req.body;
 
@@ -144,6 +150,43 @@ app.post('/api/processReferral', async (req, res) => {
   } catch (error) {
     console.error('Error processing referral:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Новий endpoint для отримання реферальних нагород
+app.post('/api/claimReferralReward', async (req, res) => {
+  console.log('Received claim referral reward request:', req.body);
+  const { userId, friendId } = req.body;
+
+  if (!userId || !friendId) {
+    console.error('Missing required parameters');
+    return res.status(400).json({
+      success: false,
+      error: 'User ID and friend ID are required'
+    });
+  }
+
+  try {
+    const result = await claimReferralReward(userId, friendId);
+    console.log('Referral reward claimed successfully:', result);
+
+    // Отримуємо оновлені дані користувача
+    const updatedUserData = await getUserData(userId);
+
+    res.json({
+      success: true,
+      message: 'Reward claimed successfully',
+      newCoins: result.newCoins,
+      newTotalCoins: result.newTotalCoins,
+      userData: updatedUserData
+    });
+  } catch (error) {
+    console.error('Error claiming referral reward:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error claiming referral reward',
+      message: error.message
+    });
   }
 });
 

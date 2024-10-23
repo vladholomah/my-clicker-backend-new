@@ -1,3 +1,5 @@
+// db.js
+
 import { createPool } from '@vercel/postgres';
 import dotenv from 'dotenv';
 
@@ -43,6 +45,25 @@ export async function initializeDatabase() {
   let client;
   try {
     client = await pool.connect();
+
+    // Перевіряємо чи існує колонка referral_rewards_claimed
+    const { rows } = await client.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' 
+      AND column_name = 'referral_rewards_claimed'
+    `);
+
+    // Якщо колонка не існує, додаємо її
+    if (rows.length === 0) {
+      await client.query(`
+        ALTER TABLE users 
+        ADD COLUMN IF NOT EXISTS referral_rewards_claimed BIGINT[] DEFAULT ARRAY[]::BIGINT[]
+      `);
+      console.log('Added referral_rewards_claimed column to users table');
+    }
+
+    // Створюємо таблицю, якщо вона не існує
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
@@ -55,12 +76,14 @@ export async function initializeDatabase() {
         level VARCHAR(50) DEFAULT 'Новачок',
         referrals BIGINT[],
         referred_by BIGINT,
-        avatar VARCHAR(255)
+        avatar VARCHAR(255),
+        referral_rewards_claimed BIGINT[] DEFAULT ARRAY[]::BIGINT[]
       )
     `);
     console.log('Database initialized successfully');
   } catch (err) {
     console.error('Error initializing database:', err);
+    throw err;
   } finally {
     if (client) {
       client.release();
