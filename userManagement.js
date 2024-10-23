@@ -1,11 +1,11 @@
 import { pool } from './db.js';
 
-// Експортуємо функції правильно
+// Допоміжна функція для генерації реферального коду
 function generateReferralCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-export async function initializeUser(userId, firstName, lastName, username, avatarUrl) {
+async function initializeUser(userId, firstName, lastName, username, avatarUrl) {
   let client;
   try {
     client = await pool.connect();
@@ -63,7 +63,7 @@ export async function initializeUser(userId, firstName, lastName, username, avat
   }
 }
 
-export async function processReferral(referralCode, userId) {
+async function processReferral(referralCode, userId) {
   let client;
   try {
     client = await pool.connect();
@@ -131,7 +131,7 @@ export async function processReferral(referralCode, userId) {
   }
 }
 
-export async function getUserData(userId) {
+async function getUserData(userId) {
   let client;
   try {
     client = await pool.connect();
@@ -206,8 +206,7 @@ export async function getUserData(userId) {
   }
 }
 
-// Експортуємо окремо функцію оновлення рівня
-export async function updateUserLevel(userId, newLevel) {
+async function updateUserLevel(userId, newLevel) {
   let client;
   try {
     client = await pool.connect();
@@ -235,13 +234,12 @@ export async function updateUserLevel(userId, newLevel) {
   }
 }
 
-export async function updateUserCoins(userId, coinsToAdd) {
+async function updateUserCoins(userId, coinsToAdd) {
   let client;
   try {
     client = await pool.connect();
     await client.query('BEGIN');
 
-    // Перевіряємо чи існує користувач і оновлюємо монети
     const { rows: result } = await client.query(`
       UPDATE users 
       SET coins = coins + $1, 
@@ -271,11 +269,11 @@ export async function updateUserCoins(userId, coinsToAdd) {
   }
 }
 
-// Переконуємося, що всі необхідні функції експортуються
+// Єдиний експорт всіх функцій
 export {
   initializeUser,
   processReferral,
   getUserData,
   updateUserLevel,
-  // updateUserCoins вже експортується через export async function вище
+  updateUserCoins
 };
