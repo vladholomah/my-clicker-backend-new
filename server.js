@@ -217,8 +217,7 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
   try {
     const client = await pool.connect();
@@ -227,6 +226,7 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('Error connecting to the database:', err);
   }
+});
 });
 
 process.on('SIGTERM', async () => {
