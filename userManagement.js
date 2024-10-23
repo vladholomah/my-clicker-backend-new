@@ -95,30 +95,57 @@ export async function processReferral(referralCode, userId) {
 
     console.log(`Processing referral: code=${referralCode}, userId=${userId}`);
 
+    // Знаходимо користувача, який запросив (реферера)
     const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
     if (referrer.length === 0) {
       throw new Error('Invalid referral code');
     }
+    console.log('Found referrer:', referrer[0].telegram_id);
 
     if (referrer[0].telegram_id === userId) {
       throw new Error('Cannot use own referral code');
     }
 
+    // Перевіряємо чи користувач вже був запрошений
     const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user[0].referred_by) {
       throw new Error('User already referred');
     }
 
+    console.log('Setting up referral relationship...');
+
+    // Встановлюємо зв'язок між користувачами
     await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
     await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
 
+    // Нараховуємо бонусні монети
     const bonusCoins = 1000;
-    await client.query('UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
-      [bonusCoins, referrer[0].telegram_id, userId]);
+    console.log(`Adding ${bonusCoins} bonus coins to both users...`);
+
+    await client.query(`
+      UPDATE users 
+      SET coins = coins + $1, total_coins = total_coins + $1 
+      WHERE telegram_id IN ($2, $3)
+      RETURNING telegram_id, coins, total_coins
+    `, [bonusCoins, referrer[0].telegram_id, userId]);
 
     await client.query('COMMIT');
-    console.log('Referral processed successfully');
-    return { success: true, message: 'Referral processed successfully', bonusCoins };
+    console.log('Referral processed successfully, bonus coins added');
+
+    // Отримуємо оновлені дані користувачів
+    const { rows: updatedUsers } = await client.query(
+      'SELECT telegram_id, coins, total_coins FROM users WHERE telegram_id IN ($1, $2)',
+      [referrer[0].telegram_id, userId]
+    );
+
+    console.log('Updated users data:', updatedUsers);
+
+    return {
+      success: true,
+      message: 'Referral processed successfully',
+      bonusCoins,
+      updatedUsers
+    };
   } catch (error) {
     if (client) await client.query('ROLLBACK');
     console.error('Error processing referral:', error);
@@ -127,7 +154,6 @@ export async function processReferral(referralCode, userId) {
     if (client) client.release();
   }
 }
-
 export async function getUserData(userId) {
   let client;
   try {
