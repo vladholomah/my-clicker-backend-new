@@ -1,5 +1,34 @@
 import { pool } from './db.js';
 
+// New function for level updates
+export async function updateUserLevel(userId, newLevel) {
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+
+    const { rows: result } = await client.query(`
+      UPDATE users 
+      SET level = $1
+      WHERE telegram_id = $2 
+      RETURNING level, coins, total_coins
+    `, [newLevel, userId]);
+
+    if (result.length === 0) {
+      throw new Error('User not found');
+    }
+
+    await client.query('COMMIT');
+    return result[0];
+  } catch (error) {
+    if (client) await client.query('ROLLBACK');
+    console.error('Error updating user level:', error);
+    throw error;
+  } finally {
+    if (client) client.release();
+  }
+}
+
 export async function initializeUser(userId, firstName, lastName, username, avatarUrl) {
   let client;
   try {
@@ -16,7 +45,7 @@ export async function initializeUser(userId, firstName, lastName, username, avat
       const referralCode = generateReferralCode();
       const { rows: newUser } = await client.query(
         'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
-        [userId, firstName || null, lastName || null, username || null, referralCode, 'Новачок', avatarUrl]
+        [userId, firstName || null, lastName || null, username || null, referralCode, 'Silver', avatarUrl]
       );
       console.log('Результат створення нового користувача:', JSON.stringify(newUser));
       user = newUser;
@@ -83,7 +112,7 @@ export async function processReferral(referralCode, userId) {
     await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
     await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
 
-    const bonusCoins = 1000; // Збільшено бонус до 1000 монет
+    const bonusCoins = 1000;
     await client.query('UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
       [bonusCoins, referrer[0].telegram_id, userId]);
 

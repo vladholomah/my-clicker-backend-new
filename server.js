@@ -5,7 +5,7 @@ import { pool } from './db.js';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import { initializeUser, processReferral, getUserData, updateUserCoins } from './userManagement.js';
+import { initializeUser, processReferral, getUserData, updateUserCoins, updateUserLevel } from './userManagement.js';
 
 dotenv.config();
 
@@ -55,6 +55,23 @@ app.use((req, res, next) => {
   console.log('Headers:', JSON.stringify(req.headers));
   console.log('Body:', JSON.stringify(req.body));
   next();
+});
+
+// Додаємо новий маршрут для оновлення рівня користувача
+app.post('/api/updateUserLevel', async (req, res) => {
+  const { userId, newLevel } = req.body;
+
+  if (!userId || !newLevel) {
+    return res.status(400).json({ error: 'User ID and new level are required' });
+  }
+
+  try {
+    const result = await updateUserLevel(userId, newLevel);
+    res.json(result);
+  } catch (error) {
+    console.error('Error updating user level:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
 });
 
 // Test route
