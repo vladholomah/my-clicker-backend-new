@@ -43,19 +43,17 @@ export async function initializeUser(userId, firstName, lastName, username, avat
     if (user.length === 0) {
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
-      const defaultFirstName = firstName || 'User';  // Додано дефолтне значення
       const { rows: newUser } = await client.query(
         'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
-        [userId, defaultFirstName, lastName, username, referralCode, 'Silver', avatarUrl]
+        [userId, firstName || null, lastName || null, username || null, referralCode, 'Silver', avatarUrl]
       );
       console.log('Результат створення нового користувача:', JSON.stringify(newUser));
       user = newUser;
     } else {
       console.log('Користувач вже існує, оновлюємо дані');
-      // Не оновлюємо first_name якщо воно null
       const { rows: updatedUser } = await client.query(
-        'UPDATE users SET first_name = COALESCE($2, first_name), last_name = $3, username = $4, avatar = COALESCE($5, avatar) WHERE telegram_id = $1 RETURNING *',
-        [userId, firstName, lastName, username, avatarUrl]
+        'UPDATE users SET first_name = $2, last_name = $3, username = $4, avatar = COALESCE($5, avatar) WHERE telegram_id = $1 RETURNING *',
+        [userId, firstName || null, lastName || null, username || null, avatarUrl]
       );
       user = updatedUser;
     }
