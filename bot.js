@@ -1,33 +1,12 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 import { initializeUser, processReferral, getUserData } from './userManagement.js';
-import pkg from '@vercel/postgres';
-const { sql } = pkg;
 
 dotenv.config();
-
-// Перевірка наявності необхідних змінних середовища
-const requiredEnvVars = ['BOT_TOKEN', 'FRONTEND_URL', 'BOT_USERNAME', 'POSTGRES_URL'];
-requiredEnvVars.forEach(varName => {
-  if (!process.env[varName]) {
-    console.error(`Missing required environment variable: ${varName}`);
-    process.exit(1);
-  }
-});
 
 console.log('FRONTEND_URL при запуску:', process.env.FRONTEND_URL);
 console.log('POSTGRES_URL (перші 20 символів):', process.env.POSTGRES_URL.substring(0, 20) + '...');
 console.log('BOT_TOKEN (перші 10 символів):', process.env.BOT_TOKEN.substring(0, 10) + '...');
-
-// Додаємо обробку uncaughtException
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
-
-// Додаємо обробку unhandledRejection
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, {
   webHook: {
@@ -35,230 +14,96 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
   }
 });
 
-// Функція для перевірки з'єднання з базою даних
-async function checkDatabaseConnection() {
-  try {
-    await sql`SELECT 1`;
-    return true;
-  } catch (error) {
-    console.error('Database connection error:', error);
-    return false;
-  }
-}
-
-// Обробка текстових повідомлень
 bot.on('text', async (msg) => {
-  try {
-    console.log('Отримано повідомлення:', msg.text);
-    if (msg.text.startsWith('/start')) {
-      console.log('Обробка команди /start');
-      await handleStart(msg);
-    }
-  } catch (error) {
-    console.error('Помилка при обробці текстового повідомлення:', error);
-    try {
-      await bot.sendMessage(msg.chat.id, 'Виникла помилка при обробці вашого повідомлення. Спробуйте пізніше.');
-    } catch (sendError) {
-      console.error('Помилка при відправці повідомлення про помилку:', sendError);
-    }
+  console.log('Отримано повідомлення:', msg.text);
+  if (msg.text.startsWith('/start')) {
+    console.log('Обробка команди /start');
+    await handleStart(msg);
   }
 });
 
-// Обробка помилок при опитуванні Telegram API
 bot.on('polling_error', (error) => {
   console.error('Помилка при опитуванні Telegram API:', error);
 });
 
-// Обробка callback-запитів
-bot.on('callback_query', async (query) => {
-  try {
-    const chatId = query.message.chat.id;
-    const userId = query.from.id;
-
-    if (query.data === 'invite_friends') {
-      try {
-        // Перевіряємо з'єднання з базою даних
-        const isConnected = await checkDatabaseConnection();
-        if (!isConnected) {
-          throw new Error('Database connection failed');
-        }
-
-        const userData = await getUserData(userId);
-        if (!userData) {
-          throw new Error('User data not found');
-        }
-
-        const inviteLink = `https://t.me/${process.env.BOT_USERNAME}?start=${userData.referralCode}`;
-        await bot.answerCallbackQuery(query.id);
-        await bot.sendMessage(
-          chatId,
-          `🎁 Ось ваше реферальне посилання: ${inviteLink}\n\n` +
-          `Поділіться ним з друзями і отримайте ${1000} монет за кожного запрошеного друга!\n\n` +
-          `Ваш поточний баланс: ${userData.coins} монет`
-        );
-      } catch (error) {
-        console.error('Помилка при отриманні реферального посилання:', error);
-        await bot.answerCallbackQuery(query.id, {
-          text: 'Виникла помилка. Спробуйте пізніше.',
-          show_alert: true
-        });
-      }
-    }
-  } catch (error) {
-    console.error('Помилка при обробці callback_query:', error);
-  }
-});
-
-// Головний обробник команди /start
 async function handleStart(msg) {
   console.log('Початок обробки команди /start');
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: 'Play Game', web_app: { url: `${process.env.FRONTEND_URL}?userId=${userId}` } }]
+    ]
+  };
+
   try {
-    // Перевіряємо з'єднання з базою даних
-    const isConnected = await checkDatabaseConnection();
-    if (!isConnected) {
-      throw new Error('Database connection failed');
-    }
-
-    // Створюємо клавіатуру з веб-додатком
-    const keyboard = {
-      inline_keyboard: [
-        [{
-          text: '🎮 Play Game',
-          web_app: { url: `${process.env.FRONTEND_URL}?userId=${userId}` }
-        }],
-        [{
-          text: '👥 Запросити друзів',
-          callback_data: 'invite_friends'
-        }]
-      ]
-    };
-
-    console.log('Підготовка до відправки повідомлення');
+    console.log('Підготовка до відправки повідомлення з кнопкою "Play Game"');
     console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
     console.log('Keyboard:', JSON.stringify(keyboard));
 
-    // Отримуємо фото профілю користувача
-    let avatarUrl = null;
-    try {
-      const photos = await bot.getUserProfilePhotos(userId, { limit: 1 });
-      if (photos && photos.total_count > 0) {
-        avatarUrl = await bot.getFileLink(photos.photos[0][0].file_id);
-      }
-    } catch (photoError) {
-      console.error('Помилка при отриманні фото профілю:', photoError);
-      // Продовжуємо без фото
-    }
+    const sentMessage = await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
+      reply_markup: keyboard
+    });
+    console.log('Повідомлення успішно відправлено:', sentMessage);
 
-    // Ініціалізуємо користувача
-    let userData;
     try {
-      userData = await initializeUser(
-        userId,
-        msg.from.first_name,
-        msg.from.last_name,
-        msg.from.username,
-        avatarUrl
-      );
+      const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 }).then(photos => {
+        if (photos.total_count > 0) {
+          return bot.getFileLink(photos.photos[0][0].file_id);
+        }
+        return null;
+      });
+
+      const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username, avatarUrl);
       console.log('Користувач успішно ініціалізований:', userData);
 
-      // Обробка реферального коду
+      // Обробка реферального коду, якщо він є
       const startParam = msg.text.split(' ')[1];
       if (startParam) {
-        try {
-          const referralResult = await processReferral(startParam, userId);
-          console.log('Реферальний код оброблено:', referralResult);
+        const referralResult = await processReferral(startParam, userId);
+        console.log('Реферальний код оброблено:', referralResult);
 
-          if (referralResult.success) {
-            await bot.sendMessage(
-              chatId,
-              `🎉 Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`
-            );
-
-            // Оновлюємо дані користувача після реферального бонусу
-            userData = await getUserData(userId);
-          }
-        } catch (refError) {
-          console.error('Помилка при обробці реферального коду:', refError);
-          if (refError.message !== 'User already referred') {
-            await bot.sendMessage(
-              chatId,
-              'На жаль, виникла помилка при обробці реферального коду. Спробуйте пізніше.'
-            );
-          }
+        if (referralResult.success) {
+          await bot.sendMessage(chatId, `Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`);
         }
       }
-
-      // Відправляємо привітальне повідомлення
-      const welcomeMessage = `
-🎮 Ласкаво просимо до TWASH COIN!
-
-💰 Ваш поточний баланс: ${userData.coins} монет
-🏆 Ваш рівень: ${userData.level}
-
-Натисніть кнопку нижче, щоб почати гру!
-      `;
-
-      const sentMessage = await bot.sendMessage(chatId, welcomeMessage, {
-        reply_markup: keyboard
-      });
-      console.log('Повідомлення успішно відправлено:', sentMessage);
-
     } catch (dbError) {
-      console.error('Помилка при ініціалізації користувача:', dbError);
-
-      // Відправляємо повідомлення навіть якщо є помилка з БД
-      await bot.sendMessage(chatId, 'Ласкаво просимо до TWASH COIN! Натисніть кнопку нижче, щоб почати гру:', {
-        reply_markup: keyboard
-      });
+      console.error('Помилка при ініціалізації користувача або обробці реферального коду:', dbError);
+      await bot.sendMessage(chatId, 'Виникла помилка при обробці вашого запиту. Будь ласка, спробуйте ще раз пізніше.');
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
+    console.log('Завершення обробки команди /start');
     try {
-      await bot.sendMessage(
-        chatId,
-        'Вибачте, сталася помилка. Спробуйте ще раз пізніше або зверніться до підтримки.'
-      );
+      await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше або зверніться до підтримки.');
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення про помилку:', sendError);
     }
   }
-  console.log('Завершення обробки команди /start');
 }
 
-// Ініціалізація бота
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const userId = query.from.id;
+
+  if (query.data === 'invite_friends') {
+    try {
+      const userData = await getUserData(userId);
+      const inviteLink = `https://t.me/${process.env.BOT_USERNAME}?start=${userData.referralCode}`;
+      await bot.answerCallbackQuery(query.id);
+      await bot.sendMessage(chatId, `Ось ваше реферальне посилання: ${inviteLink}\nПоділіться ним з друзями і отримайте бонуси!`);
+    } catch (error) {
+      console.error('Помилка при отриманні реферального посилання:', error);
+      await bot.answerCallbackQuery(query.id, { text: 'Виникла помилка. Спробуйте пізніше.' });
+    }
+  }
+});
+
 bot.getMe().then((botInfo) => {
   console.log("Бот успішно запущено. Інформація про бота:", botInfo);
 }).catch((error) => {
   console.error("Помилка при отриманні інформації про бота:", error);
 });
 
-// WebHook management functions
-async function setWebhook() {
-  try {
-    const webhookUrl = `${process.env.WEBHOOK_URL}/bot${process.env.BOT_TOKEN}`;
-    const result = await bot.setWebHook(webhookUrl);
-    console.log('Webhook set result:', result);
-    return result;
-  } catch (error) {
-    console.error('Error setting webhook:', error);
-    throw error;
-  }
-}
-
-async function deleteWebhook() {
-  try {
-    const result = await bot.deleteWebHook();
-    console.log('Webhook deleted result:', result);
-    return result;
-  } catch (error) {
-    console.error('Error deleting webhook:', error);
-    throw error;
-  }
-}
-
-// Експортуємо бот та допоміжні функції
 export default bot;
-export { setWebhook, deleteWebhook };
