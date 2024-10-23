@@ -234,3 +234,48 @@ export async function updateUserLevel(userId, newLevel) {
     if (client) client.release();
   }
 }
+
+export async function updateUserCoins(userId, coinsToAdd) {
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+
+    // Перевіряємо чи існує користувач і оновлюємо монети
+    const { rows: result } = await client.query(`
+      UPDATE users 
+      SET coins = coins + $1, 
+          total_coins = total_coins + $1
+      WHERE telegram_id = $2 
+      RETURNING coins, total_coins
+    `, [coinsToAdd, userId]);
+
+    if (result.length === 0) {
+      throw new Error('User not found');
+    }
+
+    await client.query('COMMIT');
+    console.log(`Successfully updated coins for user ${userId}. Added: ${coinsToAdd}`);
+
+    return {
+      success: true,
+      newCoins: result[0].coins,
+      newTotalCoins: result[0].total_coins
+    };
+  } catch (error) {
+    if (client) await client.query('ROLLBACK');
+    console.error('Error updating user coins:', error);
+    throw error;
+  } finally {
+    if (client) client.release();
+  }
+}
+
+// Переконуємося, що всі необхідні функції експортуються
+export {
+  initializeUser,
+  processReferral,
+  getUserData,
+  updateUserLevel,
+  // updateUserCoins вже експортується через export async function вище
+};

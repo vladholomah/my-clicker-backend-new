@@ -5,7 +5,13 @@ import { pool } from './db.js';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import { initializeUser, processReferral, getUserData, updateUserCoins, updateUserLevel } from './userManagement.js';
+import {
+  initializeUser,
+  processReferral,
+  getUserData,
+  updateUserCoins,
+  updateUserLevel
+} from './userManagement.js';
 
 dotenv.config();
 
