@@ -14,22 +14,6 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
   }
 });
 
-async function getUserProfilePhoto(userId) {
-  try {
-    const photos = await bot.getUserProfilePhotos(userId, { limit: 1 });
-    if (photos && photos.total_count > 0) {
-      const fileLink = await bot.getFileLink(photos.photos[0][0].file_id);
-      console.log('Отримано фото профілю:', fileLink);
-      return fileLink;
-    }
-    console.log('Фото профілю не знайдено');
-    return null;
-  } catch (error) {
-    console.error('Помилка при отриманні фото профілю:', error);
-    return null;
-  }
-}
-
 bot.on('text', async (msg) => {
   console.log('Отримано повідомлення:', msg.text);
   if (msg.text.startsWith('/start')) {
@@ -40,25 +24,6 @@ bot.on('text', async (msg) => {
 
 bot.on('polling_error', (error) => {
   console.error('Помилка при опитуванні Telegram API:', error);
-});
-
-bot.on('error', (error) => {
-  console.error('Telegram bot error:', error);
-});
-
-bot.on('webhook_error', (error) => {
-  console.error('Webhook error:', error);
-});
-
-// Додаємо graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received');
-  try {
-    await bot.close();
-    console.log('Bot connection closed');
-  } catch (err) {
-    console.error('Error during bot shutdown:', err);
-  }
 });
 
 async function handleStart(msg) {
@@ -83,9 +48,12 @@ async function handleStart(msg) {
     console.log('Повідомлення успішно відправлено:', sentMessage);
 
     try {
-      // Отримуємо фото профілю
-      const avatarUrl = await getUserProfilePhoto(userId);
-      console.log('Отримано URL аватара:', avatarUrl);
+      const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 }).then(photos => {
+        if (photos.total_count > 0) {
+          return bot.getFileLink(photos.photos[0][0].file_id);
+        }
+        return null;
+      });
 
       const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username, avatarUrl);
       console.log('Користувач успішно ініціалізований:', userData);

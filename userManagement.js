@@ -44,7 +44,7 @@ export async function initializeUser(userId, firstName, lastName, username, avat
       console.log('Користувача не знайдено, створюємо нового');
       const referralCode = generateReferralCode();
       const { rows: newUser } = await client.query(
-        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar, referral_rewards_claimed) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, ARRAY[]::bigint[]) RETURNING *',
+        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
         [userId, firstName || null, lastName || null, username || null, referralCode, 'Silver', avatarUrl]
       );
       console.log('Результат створення нового користувача:', JSON.stringify(newUser));
@@ -128,108 +128,23 @@ export async function processReferral(referralCode, userId) {
   }
 }
 
-export async function claimReferralReward(userId, friendId) {
-  let client;
-  try {
-    client = await pool.connect();
-    await client.query('BEGIN');
-
-    // Перевіряємо наявність користувача та його рефералів
-    const { rows: user } = await client.query(`
-      SELECT telegram_id, referrals, referral_rewards_claimed, coins, total_coins 
-      FROM users 
-      WHERE telegram_id = $1
-    `, [userId]);
-
-    if (user.length === 0) {
-      throw new Error('User not found');
-    }
-
-    const currentUser = user[0];
-
-    // Перевіряємо чи є friendId в списку рефералів
-    if (!currentUser.referrals || !currentUser.referrals.includes(BigInt(friendId))) {
-      throw new Error('This user is not in your referral list');
-    }
-
-    // Перевіряємо чи не була вже отримана нагорода
-    if (currentUser.referral_rewards_claimed && currentUser.referral_rewards_claimed.includes(BigInt(friendId))) {
-      throw new Error('Reward for this referral has already been claimed');
-    }
-
-    // Нараховуємо нагороду
-    const REWARD_AMOUNT = 1000;
-    const newCoins = currentUser.coins + REWARD_AMOUNT;
-    const newTotalCoins = currentUser.total_coins + REWARD_AMOUNT;
-
-    // Оновлюємо дані користувача
-    await client.query(`
-      UPDATE users 
-      SET coins = $1, 
-          total_coins = $2, 
-          referral_rewards_claimed = array_append(COALESCE(referral_rewards_claimed, ARRAY[]::bigint[]), $3)
-      WHERE telegram_id = $4
-    `, [newCoins, newTotalCoins, friendId, userId]);
-
-    await client.query('COMMIT');
-
-    return {
-      success: true,
-      message: 'Reward claimed successfully',
-      newCoins,
-      newTotalCoins
-    };
-  } catch (error) {
-    if (client) await client.query('ROLLBACK');
-    console.error('Error claiming referral reward:', error);
-    throw error;
-  } finally {
-    if (client) client.release();
-  }
-}
-
 export async function getUserData(userId) {
   let client;
   try {
     client = await pool.connect();
     console.log('Connected to database for getUserData');
-    const { rows: user } = await client.query(`
-      SELECT 
-        telegram_id, first_name, last_name, username, coins, 
-        total_coins, level, referral_code, avatar, 
-        referrals, referral_rewards_claimed
-      FROM users 
-      WHERE telegram_id = $1
-    `, [userId]);
-
+    const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user.length === 0) {
       throw new Error('User not found');
     }
 
     const { rows: friends } = await client.query(`
-      SELECT 
-        telegram_id, first_name, last_name, username, 
-        coins, total_coins, level, avatar
+      SELECT telegram_id, first_name, last_name, username, coins, total_coins, level, avatar
       FROM users
       WHERE telegram_id = ANY($1)
     `, [user[0].referrals || []]);
 
     const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
-
-    // Форматуємо дані про друзів, додаючи інформацію про статус нагороди
-    const formattedFriends = friends.map(friend => ({
-      telegramId: friend.telegram_id.toString(),
-      firstName: friend.first_name,
-      lastName: friend.last_name,
-      username: friend.username,
-      coins: friend.coins,
-      totalCoins: friend.total_coins,
-      level: friend.level,
-      photoUrl: friend.avatar,
-      isRewardClaimed: user[0].referral_rewards_claimed
-        ? user[0].referral_rewards_claimed.includes(friend.telegram_id)
-        : false
-    }));
 
     return {
       telegramId: user[0].telegram_id.toString(),
@@ -242,7 +157,16 @@ export async function getUserData(userId) {
       referralCode: user[0].referral_code,
       referralLink: referralLink,
       photoUrl: user[0].avatar,
-      friends: formattedFriends
+      friends: friends.map(friend => ({
+        telegramId: friend.telegram_id.toString(),
+        firstName: friend.first_name,
+        lastName: friend.last_name,
+        username: friend.username,
+        coins: friend.coins,
+        totalCoins: friend.total_coins,
+        level: friend.level,
+        photoUrl: friend.avatar
+      }))
     };
   } catch (error) {
     console.error('Error fetching user data:', error);

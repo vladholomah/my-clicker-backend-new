@@ -8,10 +8,10 @@ export const pool = createPool({
   ssl: {
     rejectUnauthorized: false
   },
-  max: 1, // Зменшуємо максимальну кількість з'єднань
-  idleTimeoutMillis: 15000, // Зменшуємо час очікування
-  connectionTimeoutMillis: 5000,
-  keepAlive: false // Вимикаємо keepAlive
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+  keepAlive: true
 });
 
 pool.on('error', (err) => {
@@ -55,8 +55,7 @@ export async function initializeDatabase() {
         level VARCHAR(50) DEFAULT 'Новачок',
         referrals BIGINT[],
         referred_by BIGINT,
-        avatar VARCHAR(255),
-        referral_rewards_claimed BIGINT[] DEFAULT ARRAY[]::BIGINT[]
+        avatar VARCHAR(255)
       )
     `);
     console.log('Database initialized successfully');
@@ -69,28 +68,9 @@ export async function initializeDatabase() {
   }
 }
 
-// Видаляємо обробник process.on('exit')
-// Замість цього додаємо обробник для graceful shutdown
-process.on('SIGTERM', async () => {
-  try {
-    await pool.end();
-    console.log('Pool has ended');
-  } catch (err) {
-    console.error('Error during pool shutdown:', err);
-  } finally {
-    process.exit(0);
-  }
-});
-
-process.on('SIGINT', async () => {
-  try {
-    await pool.end();
-    console.log('Pool has ended');
-  } catch (err) {
-    console.error('Error during pool shutdown:', err);
-  } finally {
-    process.exit(0);
-  }
+process.on('exit', async () => {
+  console.log('Closing database pool...');
+  await pool.end();
 });
 
 export default pool;
