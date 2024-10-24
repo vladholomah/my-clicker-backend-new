@@ -257,6 +257,35 @@ export async function getUserData(userId) {
   }
 }
 
+// Додаємо нову функцію updateUserLevel
+export async function updateUserLevel(userId, newLevel) {
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+
+    const { rows: result } = await client.query(`
+      UPDATE users 
+      SET level = $1
+      WHERE telegram_id = $2 
+      RETURNING level, coins, total_coins
+    `, [newLevel, userId]);
+
+    if (result.length === 0) {
+      throw new Error('User not found');
+    }
+
+    await client.query('COMMIT');
+    return result[0];
+  } catch (error) {
+    if (client) await client.query('ROLLBACK');
+    console.error('Error updating user level:', error);
+    throw error;
+  } finally {
+    if (client) client.release();
+  }
+}
+
 export async function updateUserCoins(userId, coinsToAdd) {
   let client;
   try {
