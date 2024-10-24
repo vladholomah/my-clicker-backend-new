@@ -5,7 +5,15 @@ import { pool } from './db.js';
 import bot from './bot.js';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import { initializeUser, processReferral, getUserData, updateUserCoins, updateUserLevel } from './userManagement.js';
+import {
+  initializeUser,
+  processReferral,
+  getUserData,
+  updateUserCoins,
+  updateUserLevel,
+  getUnclaimedRewards,
+  claimReward
+} from './userManagement.js';
 
 dotenv.config();
 
@@ -23,6 +31,7 @@ app.set('trust proxy', 1);
 app.enable('trust proxy');
 console.log('Trust proxy setting:', app.get('trust proxy'));
 
+// Middleware
 app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL,
@@ -45,8 +54,6 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-console.log('Rate limiter configuration:', JSON.stringify(limiter.options, null, 2));
-
 // Logging middleware
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
@@ -57,7 +64,60 @@ app.use((req, res, next) => {
   next();
 });
 
-// Додаємо новий маршрут для оновлення рівня користувача
+// Нові маршрути для системи винагород
+app.get('/api/rewards/unclaimed', async (req, res) => {
+  const { userId } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      error: 'User ID is required'
+    });
+  }
+
+  try {
+    const rewards = await getUnclaimedRewards(userId);
+    res.json({
+      success: true,
+      rewards
+    });
+  } catch (error) {
+    console.error('Error fetching unclaimed rewards:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+});
+
+app.post('/api/rewards/claim', async (req, res) => {
+  const { userId, rewardId } = req.body;
+
+  if (!userId || !rewardId) {
+    return res.status(400).json({
+      success: false,
+      error: 'User ID and reward ID are required'
+    });
+  }
+
+  try {
+    const result = await claimReward(userId, rewardId);
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error('Error claiming reward:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+});
+
+// Існуючі маршрути
 app.post('/api/updateUserLevel', async (req, res) => {
   const { userId, newLevel } = req.body;
 
@@ -74,12 +134,11 @@ app.post('/api/updateUserLevel', async (req, res) => {
   }
 });
 
-// Test route
+// Інші існуючі маршрути залишаються без змін...
 app.get('/test', (req, res) => {
   res.send('Server is working!');
 });
 
-// Webhook route
 app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   console.log('Received update from Telegram:', JSON.stringify(req.body));
   bot.processUpdate(req.body);
@@ -145,23 +204,6 @@ app.post('/api/processReferral', async (req, res) => {
     console.error('Error processing referral:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
-});
-
-app.get('/api/test-db', async (req, res) => {
-  try {
-    const client = await pool.connect();
-    const result = await client.query('SELECT NOW()');
-    client.release();
-    console.log('Database test query result:', result.rows[0]);
-    res.json({ success: true, currentTime: result.rows[0].now });
-  } catch (error) {
-    console.error('Database test query error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.get('/', (req, res) => {
-  res.send('Holmah Coin Bot Server is running!');
 });
 
 // Error handling middleware

@@ -56,7 +56,18 @@ export async function initializeDatabase() {
         referrals BIGINT[],
         referred_by BIGINT,
         avatar VARCHAR(255)
-      )
+      );
+
+      CREATE TABLE IF NOT EXISTS referral_rewards (
+        id SERIAL PRIMARY KEY,
+        referrer_id BIGINT REFERENCES users(telegram_id),
+        referred_id BIGINT REFERENCES users(telegram_id),
+        reward_amount INTEGER DEFAULT 1000,
+        is_claimed BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        claimed_at TIMESTAMP WITH TIME ZONE,
+        UNIQUE(referrer_id, referred_id)
+      );
     `);
     console.log('Database initialized successfully');
   } catch (err) {
