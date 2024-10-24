@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-export const pool = createPool({
+const pool = createPool({
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false
@@ -14,6 +14,7 @@ export const pool = createPool({
   keepAlive: true
 });
 
+// Обробники подій пула
 pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
 });
@@ -22,6 +23,7 @@ pool.on('connect', () => {
   console.log('Connected to the database');
 });
 
+// Перевірка з'єднання
 export async function testConnection() {
   let client;
   try {
@@ -34,11 +36,12 @@ export async function testConnection() {
     return false;
   } finally {
     if (client) {
-      client.release();
+      await client.release();
     }
   }
 }
 
+// Ініціалізація бази даних
 export async function initializeDatabase() {
   let client;
   try {
@@ -52,10 +55,11 @@ export async function initializeDatabase() {
         referral_code VARCHAR(10) UNIQUE,
         coins INTEGER DEFAULT 0,
         total_coins INTEGER DEFAULT 0,
-        level VARCHAR(50) DEFAULT 'Новачок',
+        level VARCHAR(50) DEFAULT 'Silver',
         referrals BIGINT[],
         referred_by BIGINT,
-        avatar VARCHAR(255)
+        avatar VARCHAR(255),
+        has_unclaimed_rewards BOOLEAN DEFAULT FALSE
       );
 
       CREATE TABLE IF NOT EXISTS referral_rewards (
@@ -66,22 +70,44 @@ export async function initializeDatabase() {
         is_claimed BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         claimed_at TIMESTAMP WITH TIME ZONE,
-        UNIQUE(referrer_id, referred_id)
+        CONSTRAINT unique_referral UNIQUE(referrer_id, referred_id)
       );
     `);
     console.log('Database initialized successfully');
   } catch (err) {
     console.error('Error initializing database:', err);
+    throw err;
   } finally {
     if (client) {
-      client.release();
+      await client.release();
     }
   }
 }
 
-process.on('exit', async () => {
-  console.log('Closing database pool...');
-  await pool.end();
+// Graceful shutdown
+const cleanupOnExit = async () => {
+  try {
+    console.log('Closing database pool...');
+    await pool.end();
+  } catch (err) {
+    console.error('Error closing pool:', err);
+  }
+};
+
+// Обробка завершення процесу
+process.on('exit', cleanupOnExit);
+process.on('SIGINT', async () => {
+  await cleanupOnExit();
+  process.exit(0);
+});
+process.on('SIGTERM', async () => {
+  await cleanupOnExit();
+  process.exit(0);
 });
 
-export default pool;
+// Перехоплення необроблених помилок
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+export { pool };
