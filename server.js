@@ -132,6 +132,21 @@ app.post('/api/updateUserCoins', async (req, res) => {
   }
 });
 
+app.post('/api/claimReferralReward', async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+
+  try {
+    const result = await claimReferralReward(userId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error claiming referral reward:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/processReferral', async (req, res) => {
   const { referralCode, userId } = req.body;
   if (!referralCode || !userId) {

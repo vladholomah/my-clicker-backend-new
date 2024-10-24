@@ -87,38 +87,52 @@ export async function initializeUser(userId, firstName, lastName, username, avat
   }
 }
 
+// userManagement.js
 export async function processReferral(referralCode, userId) {
   let client;
   try {
     client = await pool.connect();
     await client.query('BEGIN');
 
-    console.log(`Processing referral: code=${referralCode}, userId=${userId}`);
-
     const { rows: referrer } = await client.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
     if (referrer.length === 0) {
       throw new Error('Invalid referral code');
     }
 
-    if (referrer[0].telegram_id === userId) {
-      throw new Error('Cannot use own referral code');
-    }
-
+    // Перевіряємо чи користувач вже використовував реферальний код
     const { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
     if (user[0].referred_by) {
       throw new Error('User already referred');
     }
 
-    await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2', [referrer[0].telegram_id, userId]);
-    await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2', [userId, referrer[0].telegram_id]);
+    // Оновлюємо статус referred_by для нового користувача
+    await client.query('UPDATE users SET referred_by = $1 WHERE telegram_id = $2',
+      [referrer[0].telegram_id, userId]);
 
-    const bonusCoins = 1000;
-    await client.query('UPDATE users SET coins = coins + $1, total_coins = total_coins + $1 WHERE telegram_id IN ($2, $3)',
-      [bonusCoins, referrer[0].telegram_id, userId]);
+    // Додаємо нового користувача до списку рефералів
+    await client.query('UPDATE users SET referrals = array_append(referrals, $1) WHERE telegram_id = $2',
+      [userId, referrer[0].telegram_id]);
+
+    // Встановлюємо has_unclaimed_rewards = true для запрошувача
+    await client.query(`
+      UPDATE users 
+      SET has_unclaimed_rewards = true 
+      WHERE telegram_id = $1
+    `, [referrer[0].telegram_id]);
+
+    // Встановлюємо has_unclaimed_rewards = true для нового користувача
+    await client.query(`
+      UPDATE users 
+      SET has_unclaimed_rewards = true 
+      WHERE telegram_id = $1
+    `, [userId]);
 
     await client.query('COMMIT');
-    console.log('Referral processed successfully');
-    return { success: true, message: 'Referral processed successfully', bonusCoins };
+    return {
+      success: true,
+      message: 'Referral processed successfully',
+      bonusCoins: 1000
+    };
   } catch (error) {
     if (client) await client.query('ROLLBACK');
     console.error('Error processing referral:', error);
@@ -128,6 +142,36 @@ export async function processReferral(referralCode, userId) {
   }
 }
 
+// Новий метод для отримання винагороди
+export async function claimReferralReward(userId) {
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+
+    // Оновлюємо баланс і знімаємо позначку про невитребувану винагороду
+    const { rows } = await client.query(`
+      UPDATE users 
+      SET coins = coins + 1000,
+          total_coins = total_coins + 1000,
+          has_unclaimed_rewards = false
+      WHERE telegram_id = $1 AND has_unclaimed_rewards = true
+      RETURNING coins, total_coins
+    `, [userId]);
+
+    await client.query('COMMIT');
+    return {
+      success: true,
+      newCoins: rows[0].coins,
+      newTotalCoins: rows[0].total_coins
+    };
+  } catch (error) {
+    if (client) await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    if (client) client.release();
+  }
+}
 export async function getUserData(userId) {
   let client;
   try {
