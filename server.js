@@ -10,8 +10,7 @@ import {
   processReferral,
   getUserData,
   updateUserCoins,
-  updateUserLevel,
-  getUserTotalCoins
+  updateUserLevel
 } from './userManagement.js';
 
 dotenv.config();
