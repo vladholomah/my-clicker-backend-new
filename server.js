@@ -25,10 +25,9 @@ console.log('BOT_USERNAME:', process.env.BOT_USERNAME);
 
 const app = express();
 
-// Безпека та налаштування
+// Конфігурація безпеки
 app.set('trust proxy', 1);
 app.enable('trust proxy');
-console.log('Trust proxy setting:', app.get('trust proxy'));
 
 app.use(helmet());
 app.use(cors({
@@ -36,33 +35,57 @@ app.use(cors({
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json());
+
+// Парсинг JSON з підтримкою великих чисел
+app.use(express.json({
+  verify: (req, res, buf) => {
+    try {
+      JSON.parse(buf);
+    } catch (e) {
+      res.status(400).json({ error: 'Invalid JSON' });
+      throw new Error('Invalid JSON');
+    }
+  }
+}));
 app.use(express.urlencoded({ extended: true }));
 
-// Налаштування rate limiter
+// Rate limiter
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 100,  // Limit each IP to 100 requests per window
   standardHeaders: true,
   legacyHeaders: false,
   trustProxy: true,
-  keyGenerator: (req) => req.ip
+  keyGenerator: (req) => req.ip,
+  handler: (req, res) => {
+    res.status(429).json({
+      error: 'Too many requests, please try again later.',
+      retryAfter: Math.ceil(limiter.windowMs / 1000)
+    });
+  }
 });
 
 app.use(limiter);
 
-// Логування запитів
+// Logging middleware
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${req.method} ${req.url}`);
   console.log('IP:', req.ip);
-  console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
   console.log('Headers:', JSON.stringify(req.headers));
   console.log('Body:', JSON.stringify(req.body));
+
+  // Логуємо відповідь
+  const originalSend = res.send;
+  res.send = function(data) {
+    console.log(`[${timestamp}] Response:`, data);
+    return originalSend.call(this, data);
+  };
+
   next();
 });
 
-// Оновлений endpoint для оновлення монет
+// API endpoints
 app.post('/api/updateUserCoins', async (req, res) => {
   const { userId, coinsToAdd } = req.body;
 
@@ -75,19 +98,25 @@ app.post('/api/updateUserCoins', async (req, res) => {
   }
 
   try {
-    console.log(`Updating coins for user ${userId}: adding ${coinsToAdd}`);
-    const result = await updateUserCoins(userId, coinsToAdd);
+    // Валідація вхідних даних
+    const coinsToAddNum = typeof coinsToAdd === 'string' ?
+      parseInt(coinsToAdd, 10) : coinsToAdd;
+
+    if (isNaN(coinsToAddNum) || coinsToAddNum <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid coins amount'
+      });
+    }
+
+    console.log(`Processing coins update: userId=${userId}, coinsToAdd=${coinsToAddNum}`);
+    const result = await updateUserCoins(userId, coinsToAddNum);
+
     console.log('Update result:', result);
-
-    // Отримуємо оновлені дані користувача
-    const userData = await getUserData(userId);
-    console.log('Updated user data:', userData);
-
     res.json({
       success: true,
       newCoins: result.newCoins,
-      newTotalCoins: result.newTotalCoins,
-      level: userData.level
+      newTotalCoins: result.newTotalCoins
     });
   } catch (error) {
     console.error('Error updating user coins:', error);
@@ -99,12 +128,10 @@ app.post('/api/updateUserCoins', async (req, res) => {
   }
 });
 
-// Endpoint для оновлення рівня користувача
 app.post('/api/updateUserLevel', async (req, res) => {
   const { userId, newLevel } = req.body;
 
   if (!userId || !newLevel) {
-    console.error('Missing required parameters:', { userId, newLevel });
     return res.status(400).json({
       success: false,
       error: 'User ID and new level are required'
@@ -112,9 +139,7 @@ app.post('/api/updateUserLevel', async (req, res) => {
   }
 
   try {
-    console.log(`Updating level for user ${userId} to ${newLevel}`);
     const result = await updateUserLevel(userId, newLevel);
-    console.log('Level update result:', result);
     res.json(result);
   } catch (error) {
     console.error('Error updating user level:', error);
@@ -126,7 +151,6 @@ app.post('/api/updateUserLevel', async (req, res) => {
   }
 });
 
-// Існуючі endpoints
 app.post('/api/initUser', async (req, res) => {
   const { userId } = req.body;
 
@@ -196,7 +220,14 @@ app.post('/api/processReferral', async (req, res) => {
   }
 });
 
-// Тестові endpoints
+// Webhook route
+app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
+  console.log('Received update from Telegram:', JSON.stringify(req.body));
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+// Test routes
 app.get('/test', (req, res) => {
   res.send('Server is working!');
 });
@@ -206,13 +237,12 @@ app.get('/api/test-db', async (req, res) => {
     const client = await pool.connect();
     const result = await client.query('SELECT NOW()');
     client.release();
-    console.log('Database test query result:', result.rows[0]);
     res.json({
       success: true,
       currentTime: result.rows[0].now
     });
   } catch (error) {
-    console.error('Database test query error:', error);
+    console.error('Database test error:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -220,30 +250,21 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
-// Webhook route
-app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
-  console.log('Received update from Telegram:', JSON.stringify(req.body));
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
-});
-
-// Root endpoint
-app.get('/', (req, res) => {
-  res.send('TWASH COIN Bot Server is running!');
-});
-
-// Обробка помилок
+// Error handling
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
-  res.status(500).send('Something broke!');
+  res.status(500).json({
+    success: false,
+    error: 'Something broke!',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
 });
 
-// Обробка необроблених відхилень промісів
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-// Запуск сервера
+// Server startup
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
