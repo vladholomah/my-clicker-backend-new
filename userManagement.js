@@ -28,6 +28,7 @@ export async function initializeUser(userId, firstName, lastName, username, avat
         console.log('Creating new user:', userId);
         const referralCode = generateReferralCode();
 
+        // Використовуємо COALESCE для обробки null значень
         const { rows: newUser } = await client.query(`
           INSERT INTO users (
             telegram_id, first_name, last_name, username, 
@@ -36,10 +37,9 @@ export async function initializeUser(userId, firstName, lastName, username, avat
           ) 
           VALUES ($1, $2, $3, $4, $5, 0, 0, 'Silver', $6, ARRAY[]::bigint[])
           RETURNING *
-        `, [userId, firstName || null, lastName || null, username || null, referralCode, avatarUrl]);
+        `, [userId, firstName || '', lastName || '', username || '', referralCode, avatarUrl]);
 
         result = newUser[0];
-        console.log('New user created:', result);
       } else {
         console.log('Updating existing user:', userId);
         const { rows: updatedUser } = await client.query(`
@@ -48,23 +48,20 @@ export async function initializeUser(userId, firstName, lastName, username, avat
             first_name = COALESCE($2, first_name),
             last_name = COALESCE($3, last_name),
             username = COALESCE($4, username),
-            avatar = COALESCE($5, avatar),
-            last_updated_at = CURRENT_TIMESTAMP
+            avatar = COALESCE($5, avatar)
           WHERE telegram_id = $1
           RETURNING *
-        `, [userId, firstName, lastName, username, avatarUrl]);
+        `, [userId, firstName || '', lastName || '', username || '', avatarUrl]);
 
         result = updatedUser[0];
-        console.log('User updated:', result);
       }
 
       await client.query('COMMIT');
-
       return {
         telegramId: result.telegram_id.toString(),
-        firstName: result.first_name,
-        lastName: result.last_name,
-        username: result.username,
+        firstName: result.first_name || '',
+        lastName: result.last_name || '',
+        username: result.username || '',
         referralCode: result.referral_code,
         referralLink: `https://t.me/${process.env.BOT_USERNAME}?start=${result.referral_code}`,
         coins: result.coins,
@@ -339,9 +336,7 @@ export async function updateUserLevel(userId, newLevel) {
     try {
       const { rows: result } = await client.query(`
         UPDATE users 
-        SET 
-          level = $1,
-          last_updated_at = CURRENT_TIMESTAMP
+        SET level = $1
         WHERE telegram_id = $2 
         RETURNING level, coins, total_coins
       `, [newLevel, userId]);

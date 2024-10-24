@@ -73,7 +73,7 @@ export async function initializeDatabase() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         telegram_id BIGINT PRIMARY KEY,
-        first_name VARCHAR(255),
+        first_name VARCHAR(255),              -- Прибрали NOT NULL
         last_name VARCHAR(255),
         username VARCHAR(255),
         referral_code VARCHAR(10) UNIQUE,
@@ -83,9 +83,7 @@ export async function initializeDatabase() {
         referrals BIGINT[] DEFAULT ARRAY[]::BIGINT[],
         referred_by BIGINT,
         avatar VARCHAR(255),
-        has_unclaimed_rewards BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        last_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        has_unclaimed_rewards BOOLEAN DEFAULT FALSE
       );
 
       CREATE TABLE IF NOT EXISTS referral_rewards (
@@ -98,10 +96,6 @@ export async function initializeDatabase() {
         claimed_at TIMESTAMP WITH TIME ZONE,
         CONSTRAINT unique_referral UNIQUE(referrer_id, referred_id)
       );
-
-      CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
-      CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code);
-      CREATE INDEX IF NOT EXISTS idx_referral_rewards_referrer ON referral_rewards(referrer_id);
     `);
 
     console.log('Database initialized successfully');
@@ -110,12 +104,7 @@ export async function initializeDatabase() {
     throw err;
   } finally {
     if (client) {
-      try {
-        await client.release();
-        console.log('Database initialization client released');
-      } catch (releaseErr) {
-        console.error('Error releasing initialization client:', releaseErr);
-      }
+      await client.release();
     }
   }
 }
