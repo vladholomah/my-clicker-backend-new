@@ -122,52 +122,36 @@ export async function initializeUser(userId, firstName, lastName, username, avat
   let client;
   try {
     client = await pool.connect();
+    console.log('Connected to database for user initialization');
     await client.query('BEGIN');
+    console.log('Starting user initialization for:', userId);
 
     let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
+    console.log('Existing user check result:', user);
 
     if (user.length === 0) {
+      console.log('Creating new user');
       const referralCode = generateReferralCode();
-      const { rows: newUser } = await client.query(`
-        INSERT INTO users (
-          telegram_id, 
-          first_name, 
-          last_name, 
-          username, 
-          referral_code, 
-          coins, 
-          total_coins, 
-          level, 
-          avatar
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
-        RETURNING *
-      `, [
-        userId,
-        firstName || null,
-        lastName || null,
-        username || null,
-        referralCode,
-        0, // початкове значення coins як bigint
-        0, // початкове значення total_coins як bigint
-        'Silver',
-        avatarUrl
-      ]);
+      const { rows: newUser } = await client.query(
+        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
+        [userId, firstName || null, lastName || null, username || null, referralCode, 'Silver', avatarUrl]
+      );
+      console.log('New user created:', newUser[0]);
       user = newUser;
     } else {
-      const { rows: updatedUser } = await client.query(`
-        UPDATE users 
-        SET 
-          first_name = $2, 
-          last_name = $3, 
-          username = $4, 
-          avatar = COALESCE($5, avatar) 
-        WHERE telegram_id = $1 
-        RETURNING *
-      `, [userId, firstName || null, lastName || null, username || null, avatarUrl]);
+      console.log('Updating existing user');
+      const { rows: updatedUser } = await client.query(
+        'UPDATE users SET first_name = $2, last_name = $3, username = $4, avatar = COALESCE($5, avatar) WHERE telegram_id = $1 RETURNING *',
+        [userId, firstName || null, lastName || null, username || null, avatarUrl]
+      );
+      console.log('User updated:', updatedUser[0]);
       user = updatedUser;
     }
 
+    const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
+
     await client.query('COMMIT');
+    console.log('User initialization completed successfully');
 
     return {
       telegramId: user[0].telegram_id.toString(),
@@ -175,17 +159,24 @@ export async function initializeUser(userId, firstName, lastName, username, avat
       lastName: user[0].last_name,
       username: user[0].username,
       referralCode: user[0].referral_code,
-      referralLink: `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`,
-      coins: (Number(user[0].coins) || 0).toString(),
-      totalCoins: (Number(user[0].total_coins) || 0).toString(),
+      referralLink: referralLink,
+      coins: user[0].coins,
+      totalCoins: user[0].total_coins,
       level: user[0].level,
       photoUrl: user[0].avatar
     };
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
+    if (client) {
+      await client.query('ROLLBACK');
+      console.log('Initialization rolled back due to error');
+    }
+    console.error('Error in initializeUser:', error);
     throw error;
   } finally {
-    if (client) client.release();
+    if (client) {
+      client.release();
+      console.log('Database client released');
+    }
   }
 }
 
