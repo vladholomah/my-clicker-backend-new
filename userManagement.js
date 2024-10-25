@@ -1,11 +1,12 @@
 import { pool } from './db.js';
 
 function getLevelInfo(score) {
-  if (score < 5000) return { name: 'Silver', reward: 1000 };
-  if (score < 25000) return { name: 'Gold', reward: 10000 };
-  if (score < 100000) return { name: 'Platinum', reward: 15000 };
-  if (score < 1000000) return { name: 'Diamond', reward: 30000 };
-  if (score < 2000000) return { name: 'Epic', reward: 50000 };
+  const numScore = Number(score) || 0;
+  if (numScore < 5000) return { name: 'Silver', reward: 1000 };
+  if (numScore < 25000) return { name: 'Gold', reward: 10000 };
+  if (numScore < 100000) return { name: 'Platinum', reward: 15000 };
+  if (numScore < 1000000) return { name: 'Diamond', reward: 30000 };
+  if (numScore < 2000000) return { name: 'Epic', reward: 50000 };
   return { name: 'Legendary', reward: 5000000 };
 }
 
@@ -18,74 +19,69 @@ export async function updateUserCoins(userId, coinsToAdd) {
     console.log(`Updating coins for user ${userId}: adding ${coinsToAdd} coins`);
 
     // Отримуємо поточні дані користувача
-    const { rows: currentUser } = await client.query(
-      'SELECT coins, total_coins, level FROM users WHERE telegram_id = $1',
-      [userId]
-    );
+    const { rows: currentUser } = await client.query(`
+      SELECT 
+        COALESCE(coins, 0) as coins, 
+        COALESCE(total_coins, 0) as total_coins, 
+        level 
+      FROM users 
+      WHERE telegram_id = $1
+    `, [userId]);
 
     if (currentUser.length === 0) {
       throw new Error('User not found');
     }
 
-    // Розраховуємо нові значення
-    const newCoins = currentUser[0].coins + coinsToAdd;
-    const newTotalCoins = currentUser[0].total_coins + coinsToAdd;
+    // Конвертуємо всі значення в числа
+    const currentCoins = Number(currentUser[0].coins) || 0;
+    const currentTotalCoins = Number(currentUser[0].total_coins) || 0;
+    const coinsToAddNum = Number(coinsToAdd) || 0;
 
-    // Визначаємо новий рівень на основі оновленого балансу
-    const newLevelInfo = getLevelInfo(newCoins);
+    // Розраховуємо нові значення
+    const newCoins = currentCoins + coinsToAddNum;
+    const newTotalCoins = currentTotalCoins + coinsToAddNum;
 
     // Оновлюємо дані користувача
     const { rows: result } = await client.query(`
       UPDATE users 
-      SET coins = $1,
-          total_coins = $2,
-          level = CASE 
-            WHEN level != $3 THEN $3
-            ELSE level
-          END
-      WHERE telegram_id = $4
+      SET 
+        coins = $1::bigint,
+        total_coins = $2::bigint
+      WHERE telegram_id = $3
       RETURNING coins, total_coins, level
-    `, [newCoins, newTotalCoins, newLevelInfo.name, userId]);
+    `, [newCoins, newTotalCoins, userId]);
 
-    console.log('User update result:', result[0]);
-
-    // Якщо рівень змінився, додаємо бонус за новий рівень
+    // Перевіряємо чи змінився рівень
+    const newLevelInfo = getLevelInfo(newCoins);
     if (currentUser[0].level !== newLevelInfo.name) {
-      console.log(`Level changed from ${currentUser[0].level} to ${newLevelInfo.name}. Adding reward: ${newLevelInfo.reward}`);
-
-      const { rows: bonusResult } = await client.query(`
+      await client.query(`
         UPDATE users
-        SET coins = coins + $1,
-            total_coins = total_coins + $1
+        SET level = $1
         WHERE telegram_id = $2
-        RETURNING coins, total_coins
-      `, [newLevelInfo.reward, userId]);
-
-      console.log('Bonus update result:', bonusResult[0]);
-
-      // Повертаємо оновлені значення після бонусу
-      result[0] = bonusResult[0];
+      `, [newLevelInfo.name, userId]);
     }
 
     await client.query('COMMIT');
 
-    console.log('Transaction committed successfully');
+    console.log('Transaction result:', {
+      oldCoins: currentCoins,
+      addedCoins: coinsToAddNum,
+      newCoins: newCoins,
+      newTotalCoins: newTotalCoins
+    });
+
     return {
-      newCoins: result[0].coins,
-      newTotalCoins: result[0].total_coins
+      newCoins: newCoins.toString(),
+      newTotalCoins: newTotalCoins.toString()
     };
   } catch (error) {
     if (client) {
       await client.query('ROLLBACK');
-      console.log('Transaction rolled back due to error');
+      console.error('Transaction rolled back:', error);
     }
-    console.error('Error in updateUserCoins:', error);
     throw error;
   } finally {
-    if (client) {
-      client.release();
-      console.log('Database client released');
-    }
+    if (client) client.release();
   }
 }
 
@@ -126,36 +122,52 @@ export async function initializeUser(userId, firstName, lastName, username, avat
   let client;
   try {
     client = await pool.connect();
-    console.log('Connected to database for user initialization');
     await client.query('BEGIN');
-    console.log('Starting user initialization for:', userId);
 
     let { rows: user } = await client.query('SELECT * FROM users WHERE telegram_id = $1', [userId]);
-    console.log('Existing user check result:', user);
 
     if (user.length === 0) {
-      console.log('Creating new user');
       const referralCode = generateReferralCode();
-      const { rows: newUser } = await client.query(
-        'INSERT INTO users (telegram_id, first_name, last_name, username, referral_code, coins, total_coins, level, avatar) VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7) RETURNING *',
-        [userId, firstName || null, lastName || null, username || null, referralCode, 'Silver', avatarUrl]
-      );
-      console.log('New user created:', newUser[0]);
+      const { rows: newUser } = await client.query(`
+        INSERT INTO users (
+          telegram_id, 
+          first_name, 
+          last_name, 
+          username, 
+          referral_code, 
+          coins, 
+          total_coins, 
+          level, 
+          avatar
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+        RETURNING *
+      `, [
+        userId,
+        firstName || null,
+        lastName || null,
+        username || null,
+        referralCode,
+        0, // початкове значення coins як bigint
+        0, // початкове значення total_coins як bigint
+        'Silver',
+        avatarUrl
+      ]);
       user = newUser;
     } else {
-      console.log('Updating existing user');
-      const { rows: updatedUser } = await client.query(
-        'UPDATE users SET first_name = $2, last_name = $3, username = $4, avatar = COALESCE($5, avatar) WHERE telegram_id = $1 RETURNING *',
-        [userId, firstName || null, lastName || null, username || null, avatarUrl]
-      );
-      console.log('User updated:', updatedUser[0]);
+      const { rows: updatedUser } = await client.query(`
+        UPDATE users 
+        SET 
+          first_name = $2, 
+          last_name = $3, 
+          username = $4, 
+          avatar = COALESCE($5, avatar) 
+        WHERE telegram_id = $1 
+        RETURNING *
+      `, [userId, firstName || null, lastName || null, username || null, avatarUrl]);
       user = updatedUser;
     }
 
-    const referralLink = `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`;
-
     await client.query('COMMIT');
-    console.log('User initialization completed successfully');
 
     return {
       telegramId: user[0].telegram_id.toString(),
@@ -163,24 +175,17 @@ export async function initializeUser(userId, firstName, lastName, username, avat
       lastName: user[0].last_name,
       username: user[0].username,
       referralCode: user[0].referral_code,
-      referralLink: referralLink,
-      coins: user[0].coins,
-      totalCoins: user[0].total_coins,
+      referralLink: `https://t.me/${process.env.BOT_USERNAME}?start=${user[0].referral_code}`,
+      coins: (Number(user[0].coins) || 0).toString(),
+      totalCoins: (Number(user[0].total_coins) || 0).toString(),
       level: user[0].level,
       photoUrl: user[0].avatar
     };
   } catch (error) {
-    if (client) {
-      await client.query('ROLLBACK');
-      console.log('Initialization rolled back due to error');
-    }
-    console.error('Error in initializeUser:', error);
+    if (client) await client.query('ROLLBACK');
     throw error;
   } finally {
-    if (client) {
-      client.release();
-      console.log('Database client released');
-    }
+    if (client) client.release();
   }
 }
 
