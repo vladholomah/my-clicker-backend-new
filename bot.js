@@ -14,20 +14,18 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
   }
 });
 
-// Додаємо обробку помилок для бота
-bot.on('error', (error) => {
-  console.error('Telegram bot error:', error);
-});
-
-bot.on('webhook_error', (error) => {
-  console.error('Webhook error:', error);
+bot.on('text', async (msg) => {
+  console.log('Отримано повідомлення:', msg.text);
+  if (msg.text.startsWith('/start')) {
+    console.log('Обробка команди /start');
+    await handleStart(msg);
+  }
 });
 
 bot.on('polling_error', (error) => {
-  console.error('Polling error:', error);
+  console.error('Помилка при опитуванні Telegram API:', error);
 });
 
-// Оновлена функція обробки команди /start
 async function handleStart(msg) {
   console.log('Початок обробки команди /start');
   const chatId = msg.chat.id;
@@ -35,12 +33,7 @@ async function handleStart(msg) {
 
   const keyboard = {
     inline_keyboard: [
-      [{
-        text: 'Play Game',
-        web_app: {
-          url: `${process.env.FRONTEND_URL}?userId=${userId}`
-        }
-      }]
+      [{ text: 'Play Game', web_app: { url: `${process.env.FRONTEND_URL}?userId=${userId}` } }]
     ]
   };
 
@@ -55,85 +48,41 @@ async function handleStart(msg) {
     console.log('Повідомлення успішно відправлено:', sentMessage);
 
     try {
-      // Отримуємо аватар користувача
-      const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 })
-        .then(photos => {
-          if (photos.total_count > 0) {
-            return bot.getFileLink(photos.photos[0][0].file_id);
-          }
-          return null;
-        });
+      const avatarUrl = await bot.getUserProfilePhotos(userId, { limit: 1 }).then(photos => {
+        if (photos.total_count > 0) {
+          return bot.getFileLink(photos.photos[0][0].file_id);
+        }
+        return null;
+      });
 
-      // Ініціалізуємо користувача з актуальними даними
-      const userData = await initializeUser(
-        userId,
-        msg.from.first_name,
-        msg.from.last_name,
-        msg.from.username,
-        avatarUrl
-      );
+      const userData = await initializeUser(userId, msg.from.first_name, msg.from.last_name, msg.from.username, avatarUrl);
       console.log('Користувач успішно ініціалізований:', userData);
 
-      // Перевіряємо наявність реферального коду
+      // Обробка реферального коду, якщо він є
       const startParam = msg.text.split(' ')[1];
       if (startParam) {
-        try {
-          console.log('Знайдено реферальний код:', startParam);
-          const referralResult = await processReferral(startParam, userId);
-          console.log('Реферальний код оброблено:', referralResult);
+        const referralResult = await processReferral(startParam, userId);
+        console.log('Реферальний код оброблено:', referralResult);
 
-          if (referralResult.success) {
-            await bot.sendMessage(
-              chatId,
-              `Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`
-            );
-          }
-        } catch (referralError) {
-          console.error('Помилка при обробці реферального коду:', referralError);
-          if (referralError.message !== 'User already referred') {
-            await bot.sendMessage(
-              chatId,
-              'Виникла помилка при обробці реферального коду. Спробуйте пізніше.'
-            );
-          }
+        if (referralResult.success) {
+          await bot.sendMessage(chatId, `Вітаємо! Ви успішно використали реферальний код та отримали бонус ${referralResult.bonusCoins} монет!`);
         }
       }
-
-      // Оновлюємо дані користувача після всіх операцій
-      const updatedUserData = await getUserData(userId);
-      console.log('Оновлені дані користувача:', updatedUserData);
-
     } catch (dbError) {
       console.error('Помилка при ініціалізації користувача або обробці реферального коду:', dbError);
-      await bot.sendMessage(
-        chatId,
-        'Виникла помилка при обробці вашого запиту. Будь ласка, спробуйте ще раз пізніше.'
-      );
+      await bot.sendMessage(chatId, 'Виникла помилка при обробці вашого запиту. Будь ласка, спробуйте ще раз пізніше.');
     }
   } catch (error) {
     console.error('Помилка при обробці команди /start:', error);
     console.log('Завершення обробки команди /start');
     try {
-      await bot.sendMessage(
-        chatId,
-        'Вибачте, сталася помилка. Спробуйте ще раз пізніше або зверніться до підтримки.'
-      );
+      await bot.sendMessage(chatId, 'Вибачте, сталася помилка. Спробуйте ще раз пізніше або зверніться до підтримки.');
     } catch (sendError) {
       console.error('Помилка при відправці повідомлення про помилку:', sendError);
     }
   }
 }
 
-// Обробка текстових повідомлень
-bot.on('text', async (msg) => {
-  console.log('Отримано повідомлення:', msg.text);
-  if (msg.text.startsWith('/start')) {
-    console.log('Обробка команди /start');
-    await handleStart(msg);
-  }
-});
-
-// Обробка callback-запитів
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const userId = query.from.id;
@@ -143,20 +92,14 @@ bot.on('callback_query', async (query) => {
       const userData = await getUserData(userId);
       const inviteLink = `https://t.me/${process.env.BOT_USERNAME}?start=${userData.referralCode}`;
       await bot.answerCallbackQuery(query.id);
-      await bot.sendMessage(
-        chatId,
-        `Ось ваше реферальне посилання: ${inviteLink}\nПоділіться ним з друзями і отримайте бонуси!`
-      );
+      await bot.sendMessage(chatId, `Ось ваше реферальне посилання: ${inviteLink}\nПоділіться ним з друзями і отримайте бонуси!`);
     } catch (error) {
       console.error('Помилка при отриманні реферального посилання:', error);
-      await bot.answerCallbackQuery(query.id, {
-        text: 'Виникла помилка. Спробуйте пізніше.'
-      });
+      await bot.answerCallbackQuery(query.id, { text: 'Виникла помилка. Спробуйте пізніше.' });
     }
   }
 });
 
-// Перевірка статусу бота при запуску
 bot.getMe().then((botInfo) => {
   console.log("Бот успішно запущено. Інформація про бота:", botInfo);
 }).catch((error) => {
