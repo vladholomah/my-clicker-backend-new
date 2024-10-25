@@ -24,10 +24,7 @@ export async function updateUserCoins(userId, coinsToAdd) {
 
     // Отримуємо поточні дані користувача
     const { rows: currentUser } = await client.query(`
-      SELECT 
-        COALESCE(coins, 0) as coins, 
-        COALESCE(total_coins, 0) as total_coins, 
-        level 
+      SELECT coins::text as coins, total_coins::text as total_coins 
       FROM users 
       WHERE telegram_id = $1::bigint
     `, [userId]);
@@ -36,47 +33,40 @@ export async function updateUserCoins(userId, coinsToAdd) {
       throw new Error('User not found');
     }
 
-    // Конвертуємо всі значення в числа
-    const currentCoins = Number(currentUser[0].coins) || 0;
-    const currentTotalCoins = Number(currentUser[0].total_coins) || 0;
-    const coinsToAddNum = Number(coinsToAdd) || 0;
+    // Конвертуємо значення
+    const currentCoins = parseInt(currentUser[0].coins || '0');
+    const currentTotalCoins = parseInt(currentUser[0].total_coins || '0');
+    const coinsToAddNum = parseInt(coinsToAdd.toString());
+
+    console.log('Current values:', {
+      currentCoins,
+      currentTotalCoins,
+      coinsToAddNum
+    });
 
     // Розраховуємо нові значення
     const newCoins = currentCoins + coinsToAddNum;
     const newTotalCoins = currentTotalCoins + coinsToAddNum;
 
-    // Оновлюємо дані користувача
+    console.log('New values:', { newCoins, newTotalCoins });
+
+    // Оновлюємо значення в базі даних
     const { rows: result } = await client.query(`
       UPDATE users 
       SET 
         coins = $1::bigint,
         total_coins = $2::bigint
       WHERE telegram_id = $3::bigint
-      RETURNING coins, total_coins, level
+      RETURNING coins::text as coins, total_coins::text as total_coins
     `, [newCoins, newTotalCoins, userId]);
-
-    // Перевіряємо чи змінився рівень
-    const newLevelInfo = getLevelInfo(newCoins);
-    if (currentUser[0].level !== newLevelInfo.name) {
-      await client.query(`
-        UPDATE users
-        SET level = $1
-        WHERE telegram_id = $2::bigint
-      `, [newLevelInfo.name, userId]);
-    }
 
     await client.query('COMMIT');
 
-    console.log('Transaction result:', {
-      oldCoins: currentCoins,
-      addedCoins: coinsToAddNum,
-      newCoins: newCoins,
-      newTotalCoins: newTotalCoins
-    });
+    console.log('Update result:', result[0]);
 
     return {
-      newCoins: newCoins.toString(),
-      newTotalCoins: newTotalCoins.toString()
+      newCoins: result[0].coins,
+      newTotalCoins: result[0].total_coins
     };
   } catch (error) {
     if (client) {
