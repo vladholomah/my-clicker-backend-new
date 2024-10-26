@@ -45,7 +45,9 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-// Логування запитів
+console.log('Rate limiter configuration:', JSON.stringify(limiter.options, null, 2));
+
+// Logging middleware
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
   console.log('IP:', req.ip);
@@ -55,71 +57,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// Оновлений маршрут для оновлення монет
-app.post('/api/updateUserCoins', async (req, res) => {
-  const { userId, coinsToAdd } = req.body;
-
-  if (!userId || coinsToAdd === undefined) {
-    return res.status(400).json({
-      error: 'User ID and coins amount are required',
-      success: false
-    });
-  }
-
-  try {
-    console.log(`Updating coins for user ${userId}, adding ${coinsToAdd}`);
-    const result = await updateUserCoins(userId, coinsToAdd);
-
-    // Перевірка рівня після оновлення монет
-    const userData = await getUserData(userId);
-    const currentLevel = userData.level;
-
-    res.json({
-      success: true,
-      newCoins: result.newCoins.toString(),
-      newTotalCoins: result.newTotalCoins.toString(),
-      currentLevel
-    });
-  } catch (error) {
-    console.error('Error updating user coins:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      details: error.message,
-      success: false
-    });
-  }
-});
-
+// Додаємо новий маршрут для оновлення рівня користувача
 app.post('/api/updateUserLevel', async (req, res) => {
   const { userId, newLevel } = req.body;
 
   if (!userId || !newLevel) {
-    return res.status(400).json({
-      error: 'User ID and new level are required',
-      success: false
-    });
+    return res.status(400).json({ error: 'User ID and new level are required' });
   }
 
   try {
     const result = await updateUserLevel(userId, newLevel);
-    res.json({
-      success: true,
-      ...result
-    });
+    res.json(result);
   } catch (error) {
     console.error('Error updating user level:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      details: error.message,
-      success: false
-    });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
-app.get('/api/test', (req, res) => {
+// Test route
+app.get('/test', (req, res) => {
   res.send('Server is working!');
 });
 
+// Webhook route
 app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   console.log('Received update from Telegram:', JSON.stringify(req.body));
   bot.processUpdate(req.body);
@@ -130,88 +90,99 @@ app.post('/api/initUser', async (req, res) => {
   const { userId } = req.body;
 
   if (!userId) {
-    return res.status(400).json({
-      error: 'User ID is required',
-      success: false
-    });
+    return res.status(400).json({ error: 'User ID is required' });
   }
 
   try {
     const userData = await initializeUser(userId);
-    res.json({
-      success: true,
-      ...userData
-    });
+    res.json(userData);
   } catch (error) {
     console.error('Error initializing user:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      details: error.message,
-      success: false
-    });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
 app.get('/api/getUserData', async (req, res) => {
   const { userId } = req.query;
-
   if (!userId) {
-    return res.status(400).json({
-      error: 'User ID is required',
-      success: false
-    });
+    return res.status(400).json({ error: 'User ID is required' });
   }
 
   try {
     const userData = await getUserData(userId);
-    res.json({
-      success: true,
-      ...userData
-    });
+    res.json(userData);
   } catch (error) {
     console.error('Error fetching user data:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      details: error.message,
-      success: false
-    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/updateUserCoins', async (req, res) => {
+  const { userId, coinsToAdd } = req.body;
+  if (!userId || coinsToAdd === undefined) {
+    return res.status(400).json({ error: 'User ID and coins amount are required' });
+  }
+
+  try {
+    const result = await updateUserCoins(userId, coinsToAdd);
+    res.json(result);
+  } catch (error) {
+    console.error('Error updating user coins:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/claimReferralReward', async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+
+  try {
+    const result = await claimReferralReward(userId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error claiming referral reward:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 app.post('/api/processReferral', async (req, res) => {
   const { referralCode, userId } = req.body;
-
   if (!referralCode || !userId) {
-    return res.status(400).json({
-      error: 'Referral code and user ID are required',
-      success: false
-    });
+    return res.status(400).json({ error: 'Referral code and user ID are required' });
   }
 
   try {
     const result = await processReferral(referralCode, userId);
-    res.json({
-      success: true,
-      ...result
-    });
+    res.json(result);
   } catch (error) {
     console.error('Error processing referral:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      details: error.message,
-      success: false
-    });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Обробка помилок
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query('SELECT NOW()');
+    client.release();
+    console.log('Database test query result:', result.rows[0]);
+    res.json({ success: true, currentTime: result.rows[0].now });
+  } catch (error) {
+    console.error('Database test query error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/', (req, res) => {
+  res.send('Holmah Coin Bot Server is running!');
+});
+
+// Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
-  res.status(500).json({
-    error: 'Something broke!',
-    details: err.message,
-    success: false
-  });
+  res.status(500).send('Something broke!');
 });
 
 process.on('unhandledRejection', (reason, promise) => {

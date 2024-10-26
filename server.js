@@ -23,15 +23,19 @@ app.set('trust proxy', 1);
 app.enable('trust proxy');
 console.log('Trust proxy setting:', app.get('trust proxy'));
 
+// Налаштування безпеки
 app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL,
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// Парсери для тіла запиту
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Налаштування rate limiter
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -45,9 +49,14 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-console.log('Rate limiter configuration:', JSON.stringify(limiter.options, null, 2));
+// Більш специфічний rate limiter для оновлення балансу
+const balanceUpdateLimiter = rateLimit({
+  windowMs: 1000, // 1 секунда
+  max: 5, // максимум 5 запитів за секунду
+  message: { error: 'Too many balance update requests. Please try again later.' }
+});
 
-// Logging middleware
+// Логування запитів
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
   console.log('IP:', req.ip);
@@ -57,12 +66,100 @@ app.use((req, res, next) => {
   next();
 });
 
-// Додаємо новий маршрут для оновлення рівня користувача
-app.post('/api/updateUserLevel', async (req, res) => {
+// Middleware для перевірки валідності userId
+const validateUserId = (req, res, next) => {
+  const userId = req.body.userId || req.query.userId;
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+  next();
+};
+
+// Оновлений роут для оновлення балансу з валідацією та rate limiting
+app.post('/api/updateUserCoins', balanceUpdateLimiter, validateUserId, async (req, res) => {
+  const { userId, coinsToAdd } = req.body;
+
+  if (coinsToAdd === undefined) {
+    return res.status(400).json({ error: 'Coins amount is required' });
+  }
+
+  try {
+    const coinsNumber = parseInt(coinsToAdd);
+    if (isNaN(coinsNumber)) {
+      return res.status(400).json({ error: 'Invalid coins amount' });
+    }
+
+    const result = await updateUserCoins(userId, coinsNumber);
+    res.json(result);
+  } catch (error) {
+    console.error('Error updating user coins:', error);
+    if (error.message === 'Insufficient coins') {
+      res.status(400).json({ error: 'Insufficient coins for this operation' });
+    } else {
+      res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+  }
+});
+
+// Оновлений роут для отримання даних користувача
+app.get('/api/getUserData', validateUserId, async (req, res) => {
+  const { userId } = req.query;
+
+  try {
+    const userData = await getUserData(userId);
+    res.json(userData);
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    if (error.message === 'User not found') {
+      res.status(404).json({ error: 'User not found' });
+    } else {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});
+
+// Оновлений роут для ініціалізації користувача
+app.post('/api/initUser', validateUserId, async (req, res) => {
+  const { userId } = req.body;
+
+  try {
+    const userData = await initializeUser(userId);
+    res.json(userData);
+  } catch (error) {
+    console.error('Error initializing user:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+// Роут для обробки реферальних кодів
+app.post('/api/processReferral', validateUserId, async (req, res) => {
+  const { referralCode, userId } = req.body;
+
+  if (!referralCode) {
+    return res.status(400).json({ error: 'Referral code is required' });
+  }
+
+  try {
+    const result = await processReferral(referralCode, userId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error processing referral:', error);
+    if (error.message === 'Invalid referral code') {
+      res.status(400).json({ error: 'Invalid referral code' });
+    } else if (error.message === 'User already referred') {
+      res.status(400).json({ error: 'User already used a referral code' });
+    } else {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});
+
+// Роут для оновлення рівня користувача
+app.post('/api/updateUserLevel', validateUserId, async (req, res) => {
   const { userId, newLevel } = req.body;
 
-  if (!userId || !newLevel) {
-    return res.status(400).json({ error: 'User ID and new level are required' });
+  if (!newLevel) {
+    return res.status(400).json({ error: 'New level is required' });
   }
 
   try {
@@ -74,94 +171,19 @@ app.post('/api/updateUserLevel', async (req, res) => {
   }
 });
 
-// Test route
+// Тестовий роут
 app.get('/test', (req, res) => {
   res.send('Server is working!');
 });
 
-// Webhook route
+// Роут для webhook Telegram
 app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => {
   console.log('Received update from Telegram:', JSON.stringify(req.body));
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
-app.post('/api/initUser', async (req, res) => {
-  const { userId } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ error: 'User ID is required' });
-  }
-
-  try {
-    const userData = await initializeUser(userId);
-    res.json(userData);
-  } catch (error) {
-    console.error('Error initializing user:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
-  }
-});
-
-app.get('/api/getUserData', async (req, res) => {
-  const { userId } = req.query;
-  if (!userId) {
-    return res.status(400).json({ error: 'User ID is required' });
-  }
-
-  try {
-    const userData = await getUserData(userId);
-    res.json(userData);
-  } catch (error) {
-    console.error('Error fetching user data:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/api/updateUserCoins', async (req, res) => {
-  const { userId, coinsToAdd } = req.body;
-  if (!userId || coinsToAdd === undefined) {
-    return res.status(400).json({ error: 'User ID and coins amount are required' });
-  }
-
-  try {
-    const result = await updateUserCoins(userId, coinsToAdd);
-    res.json(result);
-  } catch (error) {
-    console.error('Error updating user coins:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/api/claimReferralReward', async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) {
-    return res.status(400).json({ error: 'User ID is required' });
-  }
-
-  try {
-    const result = await claimReferralReward(userId);
-    res.json(result);
-  } catch (error) {
-    console.error('Error claiming referral reward:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/api/processReferral', async (req, res) => {
-  const { referralCode, userId } = req.body;
-  if (!referralCode || !userId) {
-    return res.status(400).json({ error: 'Referral code and user ID are required' });
-  }
-
-  try {
-    const result = await processReferral(referralCode, userId);
-    res.json(result);
-  } catch (error) {
-    console.error('Error processing referral:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
+// Тестовий роут для перевірки підключення до БД
 app.get('/api/test-db', async (req, res) => {
   try {
     const client = await pool.connect();
@@ -175,20 +197,23 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
+// Головна сторінка
 app.get('/', (req, res) => {
   res.send('Holmah Coin Bot Server is running!');
 });
 
-// Error handling middleware
+// Обробка помилок
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
   res.status(500).send('Something broke!');
 });
 
+// Обробка необроблених відхилень промісів
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
+// Запуск сервера
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
